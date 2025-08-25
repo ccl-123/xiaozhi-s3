@@ -47,6 +47,36 @@ std::string SystemInfo::GetChipModelName() {
     return std::string(CONFIG_IDF_TARGET);
 }
 
+std::string SystemInfo::GetMacAddressNoColon() {
+    uint8_t mac[6];
+#if CONFIG_IDF_TARGET_ESP32P4
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+#else
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+#endif
+    char mac_str[13];
+    snprintf(mac_str, sizeof(mac_str), "%02x%02x%02x%02x%02x%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    return std::string(mac_str);
+}
+
+std::string SystemInfo::GetMacAddressDecimal() {
+    uint8_t mac[6];
+#if CONFIG_IDF_TARGET_ESP32P4
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+#else
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+#endif
+    // 将MAC地址视为48位无符号整数，转为十进制字符串
+    uint64_t value = 0;
+    for (int i = 0; i < 6; ++i) {
+        value = (value << 8) | mac[i];
+    }
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%llu", (unsigned long long)value);
+    return std::string(buf);
+}
+
 esp_err_t SystemInfo::PrintTaskCpuUsage(TickType_t xTicksToWait) {
     #define ARRAY_SIZE_OFFSET 5
     TaskStatus_t *start_array = NULL, *end_array = NULL;

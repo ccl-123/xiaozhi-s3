@@ -16,6 +16,10 @@ public:
     static esp_err_t PrintTaskCpuUsage(TickType_t xTicksToWait);
     static void PrintTaskList();
     static void PrintHeapStats();
+
+    // Legacy helpers (C3 version) for topic composition
+    static std::string GetMacAddressNoColon();
+    static std::string GetMacAddressDecimal();
 };
 
 #endif // _SYSTEM_INFO_H_
