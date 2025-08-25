@@ -293,7 +293,12 @@ void AudioService::AudioOutputTask() {
             esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
             codec_->EnableOutput(true);
         }
+        auto out_start = std::chrono::steady_clock::now();
         codec_->OutputData(task->pcm);
+        auto out_end = std::chrono::steady_clock::now();
+        auto out_ms = std::chrono::duration_cast<std::chrono::milliseconds>(out_end - out_start).count();
+        ESP_LOGI(TAG, "[AUDIO-OUT][UDP] 🎧 Output done: ms=%d, samples=%u",
+                 (int)out_ms, (unsigned)task->pcm.size());
 
         /* Update the last output time */
         last_output_time_ = std::chrono::steady_clock::now();
@@ -346,6 +351,8 @@ void AudioService::OpusCodecTask() {
 
                 lock.lock();
                 audio_playback_queue_.push_back(std::move(task));
+                ESP_LOGI(TAG, "[AUDIO-DECODE][UDP] ✅ PCM ready, 📦PLAY_Q=[%u/%u]",
+                         (unsigned)audio_playback_queue_.size(), (unsigned)MAX_PLAYBACK_TASKS_IN_QUEUE);
                 audio_queue_cv_.notify_all();
             } else {
                 ESP_LOGE(TAG, "Failed to decode audio");
@@ -432,12 +439,18 @@ bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> pa
     std::unique_lock<std::mutex> lock(audio_queue_mutex_);
     if (audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {
         if (wait) {
+            ESP_LOGW(TAG, "[AUDIO-RX][UDP] ❌ Queue full (%u/%u), wait for space...",
+                     (unsigned)audio_decode_queue_.size(), (unsigned)MAX_DECODE_PACKETS_IN_QUEUE);
             audio_queue_cv_.wait(lock, [this]() { return audio_decode_queue_.size() < MAX_DECODE_PACKETS_IN_QUEUE; });
         } else {
+            ESP_LOGW(TAG, "[AUDIO-RX][UDP] ❌ Queue full (%u/%u), drop packet",
+                     (unsigned)audio_decode_queue_.size(), (unsigned)MAX_DECODE_PACKETS_IN_QUEUE);
             return false;
         }
     }
     audio_decode_queue_.push_back(std::move(packet));
+    ESP_LOGI(TAG, "[AUDIO-RX][UDP] 🔊 Added packet, 📦NEW_SIZE=[%u/%u]",
+             (unsigned)audio_decode_queue_.size(), (unsigned)MAX_DECODE_PACKETS_IN_QUEUE);
     audio_queue_cv_.notify_all();
     return true;
 }

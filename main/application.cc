@@ -15,6 +15,8 @@
 #include <driver/gpio.h>
 #include <arpa/inet.h>
 
+#include <inttypes.h>
+
 #define TAG "Application"
 
 
@@ -108,7 +110,7 @@ void Application::CheckNewVersion(Ota& ota) {
             vTaskDelay(pdMS_TO_TICKS(3000));
 
             SetDeviceState(kDeviceStateUpgrading);
-            
+
             display->SetIcon(FONT_AWESOME_DOWNLOAD);
             std::string message = std::string(Lang::Strings::NEW_VERSION) + ota.GetFirmwareVersion();
             display->SetChatMessage("system", message.c_str());
@@ -183,7 +185,7 @@ void Application::ShowActivationCode(const std::string& code, const std::string&
     };
     static const std::array<digit_sound, 10> digit_sounds{{
         digit_sound{'0', Lang::Sounds::OGG_0},
-        digit_sound{'1', Lang::Sounds::OGG_1}, 
+        digit_sound{'1', Lang::Sounds::OGG_1},
         digit_sound{'2', Lang::Sounds::OGG_2},
         digit_sound{'3', Lang::Sounds::OGG_3},
         digit_sound{'4', Lang::Sounds::OGG_4},
@@ -281,7 +283,7 @@ void Application::StartListening() {
         ESP_LOGE(TAG, "Protocol not initialized");
         return;
     }
-    
+
     if (device_state_ == kDeviceStateIdle) {
         Schedule([this]() {
             if (!protocol_->IsAudioChannelOpened()) {
@@ -382,7 +384,14 @@ void Application::Start() {
         last_error_message_ = message;
         xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
     });
+    static uint32_t s_udp_pkt_id = 0;
+    static auto s_udp_last_time = std::chrono::steady_clock::now();
+
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
+        auto now = std::chrono::steady_clock::now();
+        auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(now - s_udp_last_time).count();
+        s_udp_last_time = now;
+        ESP_LOGI(TAG, "[AUDIO-RX][UDP] pkt#%" PRIu32 ", Δ=%dms", ++s_udp_pkt_id, (int)dt);
         if (device_state_ == kDeviceStateSpeaking) {
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         }
@@ -632,7 +641,7 @@ void Application::SetDeviceState(DeviceState state) {
     if (device_state_ == state) {
         return;
     }
-    
+
     clock_ticks_ = 0;
     auto previous_state = device_state_;
     device_state_ = state;
@@ -700,14 +709,14 @@ void Application::WakeWordInvoke(const std::string& wake_word) {
         ToggleChatState();
         Schedule([this, wake_word]() {
             if (protocol_) {
-                protocol_->SendWakeWordDetected(wake_word); 
+                protocol_->SendWakeWordDetected(wake_word);
             }
-        }); 
+        });
     } else if (device_state_ == kDeviceStateSpeaking) {
         Schedule([this]() {
             AbortSpeaking(kAbortReasonNone);
         });
-    } else if (device_state_ == kDeviceStateListening) {   
+    } else if (device_state_ == kDeviceStateListening) {
         Schedule([this]() {
             if (protocol_) {
                 protocol_->CloseAudioChannel();
