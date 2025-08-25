@@ -6,7 +6,6 @@
 #include <mqtt.h>
 #include <udp.h>
 #include <cJSON.h>
-#include <mbedtls/aes.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 
@@ -39,8 +38,6 @@ private:
     std::mutex channel_mutex_;
     std::unique_ptr<Mqtt> mqtt_;
     std::unique_ptr<Udp> udp_;
-    mbedtls_aes_context aes_ctx_;
-    std::string aes_nonce_;
     std::string udp_server_;
     int udp_port_;
     uint32_t local_sequence_;
@@ -48,7 +45,6 @@ private:
 
     bool StartMqttClient(bool report_error=false);
     void ParseServerHello(const cJSON* root);
-    std::string DecodeHexString(const std::string& hex_string);
 
     bool SendText(const std::string& text) override;
     std::string GetHelloMessage();

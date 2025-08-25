@@ -37,10 +37,16 @@ Ota::Ota() {
 #endif
 }
 
-Ota::~Ota() {
-}
+Ota::~Ota() {}
+
+void Ota::SetCheckVersionUrl(const std::string& url) { override_url_ = url; }
+void Ota::SetHeader(const std::string& key, const std::string& value) { extra_headers_.emplace_back(key, value); }
+void Ota::SetPostData(const std::string& data) { post_data_ = data; }
 
 std::string Ota::GetCheckVersionUrl() {
+    if (!override_url_.empty()) {
+        return override_url_;
+    }
     Settings settings("wifi", false);
     std::string url = settings.GetString("ota_url");
     if (url.empty()) {
@@ -56,16 +62,17 @@ std::unique_ptr<Http> Ota::SetupHttp() {
     auto network = board.GetNetwork();
     auto http = network->CreateHttp(0);
     auto user_agent = std::string(BOARD_NAME "/") + app_desc->version;
-    http->SetHeader("Activation-Version", has_serial_number_ ? "2" : "1");
+
+    // Base headers (keep for compatibility)
     http->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
     http->SetHeader("Client-Id", board.GetUuid());
-    if (has_serial_number_) {
-        http->SetHeader("Serial-Number", serial_number_.c_str());
-        ESP_LOGI(TAG, "Setup HTTP, User-Agent: %s, Serial-Number: %s", user_agent.c_str(), serial_number_.c_str());
-    }
     http->SetHeader("User-Agent", user_agent);
-    http->SetHeader("Accept-Language", Lang::CODE);
     http->SetHeader("Content-Type", "application/json");
+
+    // Apply extra headers if any (legacy behavior)
+    for (auto& kv : extra_headers_) {
+        http->SetHeader(kv.first.c_str(), kv.second.c_str());
+    }
 
     return http;
 }
@@ -89,7 +96,7 @@ bool Ota::CheckVersion() {
 
     auto http = SetupHttp();
 
-    std::string data = board.GetJson();
+    std::string data = post_data_.empty() ? board.GetJson() : post_data_;
     std::string method = data.length() > 0 ? "POST" : "GET";
     http->SetContent(std::move(data));
 

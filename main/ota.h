@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 #include <esp_err.h>
 #include "board.h"
@@ -11,6 +12,11 @@ class Ota {
 public:
     Ota();
     ~Ota();
+
+    // Compatibility helpers for legacy servers
+    void SetCheckVersionUrl(const std::string& url);
+    void SetHeader(const std::string& key, const std::string& value);
+    void SetPostData(const std::string& data);
 
     bool CheckVersion();
     esp_err_t Activate();
@@ -30,6 +36,11 @@ public:
     std::string GetCheckVersionUrl();
 
 private:
+    // Legacy compatibility fields
+    std::string override_url_;
+    std::vector<std::pair<std::string, std::string>> extra_headers_;
+    std::string post_data_;
+
     std::string activation_message_;
     std::string activation_code_;
     bool has_new_version_ = false;
