@@ -391,12 +391,13 @@ void Application::Start() {
         last_error_message_ = message;
         xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
     });
-    static uint32_t s_udp_pkt_id = 0;
+    // static uint32_t s_udp_pkt_id = 0; // 未使用，注释掉
     static auto s_udp_last_time = std::chrono::steady_clock::now();
 
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
         auto now = std::chrono::steady_clock::now();
         auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(now - s_udp_last_time).count();
+        (void)dt; // 避免未使用变量警告
         s_udp_last_time = now;
         //ESP_LOGI(TAG, "[AUDIO-RX] pkt#%" PRIu32 ", Δ=%dms", ++s_udp_pkt_id, (int)dt);
         if (device_state_ == kDeviceStateSpeaking) {
@@ -833,46 +834,10 @@ void Application::OnIMUTimer() {
         return;
     }
 
-    static int log_counter = 0;
+
     t_sQMI8658 imu_data;
 
     if (imu_sensor_->ReadMotionData(&imu_data)) {
-        // 每5次读取（0.5秒）打印一次详细数据
-        if (++log_counter >= 5) {
-            // 换算系数
-            const float ACC_LSB_TO_G = 1.0f / 8192.0f;
-            const float GYR_LSB_TO_DPS = 1.0f / 64.0f;
-
-            // 计算换算后的物理单位值
-            float acc_x_g = imu_data.acc_x * ACC_LSB_TO_G;
-            float acc_y_g = imu_data.acc_y * ACC_LSB_TO_G;
-            float acc_z_g = imu_data.acc_z * ACC_LSB_TO_G;
-            float gyr_x_dps = imu_data.gyr_x * GYR_LSB_TO_DPS;
-            float gyr_y_dps = imu_data.gyr_y * GYR_LSB_TO_DPS;
-            float gyr_z_dps = imu_data.gyr_z * GYR_LSB_TO_DPS;
-
-            ESP_LOGI(TAG, "=== IMU Data ===");
-            ESP_LOGI(TAG, "Accelerometer: X=%.4fg, Y=%.4fg, Z=%.4fg",
-                     acc_x_g, acc_y_g, acc_z_g);
-            ESP_LOGI(TAG, "Gyroscope: X=%.4f°/s, Y=%.4f°/s, Z=%.4f°/s",
-                     gyr_x_dps, gyr_y_dps, gyr_z_dps);
-            ESP_LOGI(TAG, "Angles: X=%.4f°, Y=%.4f°, Z=%.4f°",
-                     imu_data.AngleX, imu_data.AngleY, imu_data.AngleZ);
-            ESP_LOGI(TAG, "Motion Level: %d (%s)", imu_data.motion,
-                     imu_data.motion == 0 ? "IDLE" :
-                     imu_data.motion == 1 ? "SLIGHT" :
-                     imu_data.motion == 2 ? "MODERATE" : "INTENSE");
-            ESP_LOGI(TAG, "===============");
-            log_counter = 0;
-        }
-
-        // 运动检测：立即报告中等以上运动
-        // if (imu_data.motion > MOTION_LEVEL_SLIGHT) {
-        //     ESP_LOGW(TAG, "Motion detected! Level: %d (%s)",
-        //              imu_data.motion,
-        //              imu_data.motion == 2 ? "MODERATE" : "INTENSE");
-        // }
-
         // 通过MQTT每5次读取（0.5秒）发送IMU数据
         static int mqtt_counter = 0;
         if (++mqtt_counter >= 5) {

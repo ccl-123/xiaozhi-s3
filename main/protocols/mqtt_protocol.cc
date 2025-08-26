@@ -399,6 +399,24 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
     // 添加设备ID
     cJSON_AddStringToObject(root, "device_id", user_id3_.c_str());
 
+    // 打印IMU数据到日志（使用已换算的值，避免重复计算）
+    static int log_counter = 0;
+    if (++log_counter >= 1) {  // 每1次发送（0.5秒）打印一次详细数据
+        ESP_LOGI(TAG, "===== IMU Data =====");
+        ESP_LOGI(TAG, "Accelerometer: X=%.4fg, Y=%.4fg, Z=%.4fg",
+                 acc_x_rounded, acc_y_rounded, acc_z_rounded);
+        ESP_LOGI(TAG, "Gyroscope: X=%.4f°/s, Y=%.4f°/s, Z=%.4f°/s",
+                 gyr_x_rounded, gyr_y_rounded, gyr_z_rounded);
+        ESP_LOGI(TAG, "Angles: X=%.4f°, Y=%.4f°, Z=%.4f°",
+                 angle_x_rounded, angle_y_rounded, angle_z_rounded);
+        ESP_LOGI(TAG, "Motion Level: %d (%s)", imu_data.motion,
+                 imu_data.motion == 0 ? "IDLE" :
+                 imu_data.motion == 1 ? "SLIGHT" :
+                 imu_data.motion == 2 ? "MODERATE" : "INTENSE");
+        ESP_LOGI(TAG, "===================");
+        log_counter = 0;
+    }
+
     // 将JSON转换为字符串
     char* message_str = cJSON_PrintUnformatted(root);
     if (message_str == NULL) {
