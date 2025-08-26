@@ -91,17 +91,28 @@ enum qmi8658_reg {
 
 // IMU数据结构体
 typedef struct {
+    // 原始数据（LSB值）
     int16_t acc_x = 0;
     int16_t acc_y = 0;
     int16_t acc_z = 0;
     int16_t gyr_x = 0;
     int16_t gyr_y = 0;
     int16_t gyr_z = 0;
+
+    // 转换后的物理单位值
+    float acc_x_g = 0.0f;      // 加速度 (g)
+    float acc_y_g = 0.0f;
+    float acc_z_g = 0.0f;
+    float gyr_x_dps = 0.0f;    // 角速度 (°/s)
+    float gyr_y_dps = 0.0f;
+    float gyr_z_dps = 0.0f;
+
+    // 计算得出的角度和运动状态
     float AngleX = 0.0;
     float AngleY = 0.0;
     float AngleZ = 0.0;
     int motion = 0;
-    
+
     std::string ToString() const {
         return std::to_string(acc_x) + " " + std::to_string(acc_y) + " " +
                std::to_string(acc_z) + " " + std::to_string(gyr_x) + " " +
@@ -136,6 +147,7 @@ private:
 
     // 内部函数
     motion_level_t DetectMotion(t_sQMI8658 *p);
+    void ConvertToPhysicalUnits(t_sQMI8658 *data);
 
 public:
     QMI8658(i2c_master_bus_handle_t i2c_bus, uint8_t addr);
