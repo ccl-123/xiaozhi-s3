@@ -14,6 +14,13 @@
 /***************************  姿态传感器 QMI8658 ↓   ****************************/
 #define QMI8658_SENSOR_ADDR 0x6A   // QMI8658 I2C地址
 
+// QMI8658寄存器配置值定义
+#define QMI8658_CTRL1_AUTO_INC      0x60  // 地址自动增加
+#define QMI8658_CTRL7_ACC_GYR_EN    0x03  // 启用加速度计和陀螺仪
+#define QMI8658_CTRL2_ACC_4G_250HZ  0x15  // 加速度计±4g量程，250Hz采样率
+#define QMI8658_CTRL3_GYR_512DPS_250HZ 0x54  // 陀螺仪±512dps量程，250Hz采样率
+#define QMI8658_RESET_CMD           0xb0  // 软件复位命令
+
 // QMI8658寄存器地址
 enum qmi8658_reg {
     QMI8658_WHO_AM_I,

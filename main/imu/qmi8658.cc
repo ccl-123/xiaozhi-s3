@@ -50,7 +50,7 @@ bool QMI8658::Initialize() {
     
     // 软件复位
     try {
-        WriteReg(QMI8658_RESET, 0xb0);
+        WriteReg(QMI8658_RESET, QMI8658_RESET_CMD);
     } catch (...) {
         ESP_LOGE(TAG, "Failed to reset device");
         return false;
@@ -59,10 +59,10 @@ bool QMI8658::Initialize() {
 
     // 配置寄存器
     try {
-        WriteReg(QMI8658_CTRL1, 0x60);  // 地址自动增加
-        WriteReg(QMI8658_CTRL7, 0x03);  // 允许加速度和陀螺仪
-        WriteReg(QMI8658_CTRL2, 0x15);  // ACC 4g 250Hz
-        WriteReg(QMI8658_CTRL3, 0x00);  // GRY 512dps 250Hz
+        WriteReg(QMI8658_CTRL1, QMI8658_CTRL1_AUTO_INC);      // 地址自动增加
+        WriteReg(QMI8658_CTRL7, QMI8658_CTRL7_ACC_GYR_EN);   // 启用加速度计和陀螺仪
+        WriteReg(QMI8658_CTRL2, QMI8658_CTRL2_ACC_4G_250HZ); // 加速度计±4g，250Hz
+        WriteReg(QMI8658_CTRL3, QMI8658_CTRL3_GYR_512DPS_250HZ); // 陀螺仪±512dps，250Hz
     } catch (...) {
         ESP_LOGE(TAG, "Failed to configure device registers");
         return false;
