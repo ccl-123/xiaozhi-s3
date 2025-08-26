@@ -815,8 +815,8 @@ void Application::InitializeIMU() {
 
             esp_err_t ret = esp_timer_create(&imu_timer_args, &imu_timer_handle_);
             if (ret == ESP_OK) {
-                esp_timer_start_periodic(imu_timer_handle_, 100000); // 100ms
-                ESP_LOGI(TAG, "IMU timer started (100ms interval)");
+                esp_timer_start_periodic(imu_timer_handle_, 20000); // 20ms (50Hz) - 适合摔倒检测
+                ESP_LOGI(TAG, "IMU timer started (20ms interval for fall detection)");
                 ESP_LOGI(TAG, "IMU data will be logged every 1 second");
             } else {
                 ESP_LOGE(TAG, "Failed to create IMU timer: %s", esp_err_to_name(ret));
@@ -838,9 +838,9 @@ void Application::OnIMUTimer() {
     t_sQMI8658 imu_data;
 
     if (imu_sensor_->ReadMotionData(&imu_data)) {
-        // 通过MQTT每5次读取（0.5秒）发送IMU数据
+        // 通过MQTT每25次读取（0.5秒）发送IMU数据 (20ms * 25 = 500ms)
         static int mqtt_counter = 0;
-        if (++mqtt_counter >= 5) {
+        if (++mqtt_counter >= 25) {
             auto* mqtt_protocol = static_cast<MqttProtocol*>(protocol_.get());
             if (mqtt_protocol) {
                 mqtt_protocol->SendImuStatesAndValue(imu_data, 0);
@@ -850,7 +850,7 @@ void Application::OnIMUTimer() {
     } else {
         // 读取失败时的错误日志
         static int error_counter = 0;
-        if (++error_counter >= 50) { // 每5秒报告一次错误
+        if (++error_counter >= 250) { // 每5秒报告一次错误 (20ms * 250 = 5s)
             ESP_LOGE(TAG, "Failed to read IMU data");
             error_counter = 0;
         }

@@ -12,7 +12,11 @@ QMI8658::QMI8658(i2c_master_bus_handle_t i2c_bus, uint8_t addr)
     , gyr_offset_x_(0.0f)
     , gyr_offset_y_(0.0f)
     , gyr_offset_z_(0.0f)
-    , calibrated_(false) {
+    , calibrated_(false)
+    , fall_state_(FALL_STATE_NORMAL)
+    , stable_start_time_(0)
+    , possible_fall_(false) {
+    InitializeFallDetection();
 }
 
 QMI8658::~QMI8658() {
@@ -205,14 +209,18 @@ bool QMI8658::ReadMotionData(t_sQMI8658 *data) {
     if (!ReadAccAndGyr(data)) {
         return false;
     }
-    
+
     // 检测运动强度
     motion_level_t motion = DetectMotion(data);
     data->motion = static_cast<int>(motion);
-    
+
     // 计算倾角
     CalculateAngles(data);
-    
+
+    // 摔倒检测
+    fall_detection_state_t fall_state = DetectFall(data);
+    data->fall_state = static_cast<int>(fall_state);
+
     return true;
 }
 
@@ -240,6 +248,98 @@ void QMI8658::ConvertToPhysicalUnits(t_sQMI8658 *data) {
     data->gyr_x_dps = roundf(data->gyr_x_dps * 10000.0f) / 10000.0f;
     data->gyr_y_dps = roundf(data->gyr_y_dps * 10000.0f) / 10000.0f;
     data->gyr_z_dps = roundf(data->gyr_z_dps * 10000.0f) / 10000.0f;
+}
+
+void QMI8658::InitializeFallDetection() {
+    // 设置默认的摔倒检测参数
+    fall_config_.acc_threshold = 2.5f;        // 2.5g 冲击阈值
+    fall_config_.gyro_threshold = 150.0f;     // 150°/s 角速度阈值
+    fall_config_.posture_angle_threshold = 60.0f; // 60° 姿态变化阈值
+    fall_config_.stable_acc_low = 0.8f;       // 0.8g 稳定下限
+    fall_config_.stable_acc_high = 1.2f;      // 1.2g 稳定上限
+    fall_config_.stable_gyro = 20.0f;         // 20°/s 稳定角速度阈值
+    fall_config_.stable_time_ms = 1000;       // 1秒确认时间
+
+    fall_state_ = FALL_STATE_NORMAL;
+    stable_start_time_ = 0;
+    possible_fall_ = false;
+
+    ESP_LOGI(TAG, "Fall detection initialized with default parameters");
+}
+
+void QMI8658::SetFallDetectionConfig(const fall_detection_config_t& config) {
+    fall_config_ = config;
+    ESP_LOGI(TAG, "Fall detection parameters updated");
+}
+
+fall_detection_state_t QMI8658::DetectFall(t_sQMI8658 *data) {
+    if (!data || !initialized_) {
+        return FALL_STATE_NORMAL;
+    }
+
+    // 计算加速度和角速度的模长
+    float acc_mag = sqrt(data->acc_x_g * data->acc_x_g +
+                        data->acc_y_g * data->acc_y_g +
+                        data->acc_z_g * data->acc_z_g);
+
+    float gyro_mag = sqrt(data->gyr_x_dps * data->gyr_x_dps +
+                         data->gyr_y_dps * data->gyr_y_dps +
+                         data->gyr_z_dps * data->gyr_z_dps);
+
+    // 获取当前时间（毫秒）
+    uint64_t current_time = esp_timer_get_time() / 1000;
+
+    // 阶段1：检测强冲击 + 大角速度
+    if (acc_mag > fall_config_.acc_threshold && gyro_mag > fall_config_.gyro_threshold) {
+        possible_fall_ = true;
+        stable_start_time_ = 0;  // 重置稳定计时
+        fall_state_ = FALL_STATE_IMPACT;
+        ESP_LOGW(TAG, "Fall impact detected! acc=%.2fg, gyro=%.2f°/s", acc_mag, gyro_mag);
+    }
+
+    // 阶段2：确认摔倒姿态
+    if (possible_fall_) {
+        // 检查姿态角变化（使用pitch和roll，即AngleX和AngleY）
+        bool posture_changed = (fabs(data->AngleX) > fall_config_.posture_angle_threshold ||
+                               fabs(data->AngleY) > fall_config_.posture_angle_threshold);
+
+        // 检查加速度和角速度是否稳定
+        bool acc_stable = (acc_mag > fall_config_.stable_acc_low &&
+                          acc_mag < fall_config_.stable_acc_high);
+        bool gyro_stable = (gyro_mag < fall_config_.stable_gyro);
+
+        if (posture_changed && acc_stable && gyro_stable) {
+            fall_state_ = FALL_STATE_CONFIRMING;
+
+            if (stable_start_time_ == 0) {
+                stable_start_time_ = current_time;  // 开始计时
+                ESP_LOGW(TAG, "Fall confirmation started. Posture: X=%.1f°, Y=%.1f°",
+                         data->AngleX, data->AngleY);
+            } else if (current_time - stable_start_time_ > fall_config_.stable_time_ms) {
+                // 确认摔倒
+                fall_state_ = FALL_STATE_DETECTED;
+                possible_fall_ = false;  // 重置状态
+                ESP_LOGW(TAG, "FALL DETECTED! Final posture: X=%.1f°, Y=%.1f°⚠️⚠️",
+                         data->AngleX, data->AngleY);
+                return fall_state_;
+            }
+        } else {
+            // 条件不满足，重置稳定计时
+            stable_start_time_ = 0;
+            if (fall_state_ == FALL_STATE_CONFIRMING) {
+                fall_state_ = FALL_STATE_IMPACT;  // 回到冲击状态
+            }
+        }
+
+        // 超时重置（防止长时间停留在检测状态）
+        if (current_time - stable_start_time_ > 5000) {  // 5秒超时
+            possible_fall_ = false;
+            fall_state_ = FALL_STATE_NORMAL;
+            ESP_LOGW(TAG, "Fall detection timeout, reset to normal");
+        }
+    }
+
+    return fall_state_;
 }
 
 void QMI8658::CalibrateGyroscope() {

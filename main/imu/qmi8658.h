@@ -112,6 +112,7 @@ typedef struct {
     float AngleY = 0.0;
     float AngleZ = 0.0;
     int motion = 0;
+    int fall_state = 0;  // 摔倒检测状态
 
     std::string ToString() const {
         return std::to_string(acc_x) + " " + std::to_string(acc_y) + " " +
@@ -127,6 +128,25 @@ typedef enum {
     MOTION_LEVEL_MODERATE = 2,// 中等运动
     MOTION_LEVEL_INTENSE = 3  // 剧烈运动
 } motion_level_t;
+
+// 摔倒检测状态
+typedef enum {
+    FALL_STATE_NORMAL = 0,     // 正常状态
+    FALL_STATE_IMPACT = 1,     // 检测到冲击
+    FALL_STATE_CONFIRMING = 2, // 确认摔倒中
+    FALL_STATE_DETECTED = 3    // 确认摔倒
+} fall_detection_state_t;
+
+// 摔倒检测配置参数
+typedef struct {
+    float acc_threshold;        // 加速度冲击阈值 (g)
+    float gyro_threshold;       // 角速度阈值 (°/s)
+    float posture_angle_threshold; // 姿态角变化阈值 (°)
+    float stable_acc_low;       // 稳定加速度下限 (g)
+    float stable_acc_high;      // 稳定加速度上限 (g)
+    float stable_gyro;          // 稳定角速度阈值 (°/s)
+    uint32_t stable_time_ms;    // 确认时间 (毫秒)
+} fall_detection_config_t;
 
 // QMI8658 IMU传感器类 - 继承I2cDevice以访问protected方法
 class QMI8658 : public I2cDevice {
@@ -144,6 +164,12 @@ private:
     float gyr_offset_y_;
     float gyr_offset_z_;
     bool calibrated_;
+
+    // 摔倒检测相关
+    fall_detection_config_t fall_config_;
+    fall_detection_state_t fall_state_;
+    uint64_t stable_start_time_;
+    bool possible_fall_;
 
     // 内部函数
     motion_level_t DetectMotion(t_sQMI8658 *p);
@@ -170,6 +196,12 @@ public:
     
     // 运动检测
     motion_level_t GetMotionLevel(t_sQMI8658 *data);
+
+    // 摔倒检测
+    void InitializeFallDetection();
+    fall_detection_state_t DetectFall(t_sQMI8658 *data);
+    void SetFallDetectionConfig(const fall_detection_config_t& config);
+    fall_detection_state_t GetFallState() const { return fall_state_; }
 };
 
 /***************************  姿态传感器 QMI8658 ↑  ****************************/
