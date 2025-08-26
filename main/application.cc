@@ -391,7 +391,7 @@ void Application::Start() {
         auto now = std::chrono::steady_clock::now();
         auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(now - s_udp_last_time).count();
         s_udp_last_time = now;
-        ESP_LOGI(TAG, "[AUDIO-RX][UDP] pkt#%" PRIu32 ", Δ=%dms", ++s_udp_pkt_id, (int)dt);
+        //ESP_LOGI(TAG, "[AUDIO-RX] pkt#%" PRIu32 ", Δ=%dms", ++s_udp_pkt_id, (int)dt);
         if (device_state_ == kDeviceStateSpeaking) {
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         }
@@ -417,6 +417,7 @@ void Application::Start() {
         if (strcmp(type->valuestring, "tts") == 0) {
             auto state = cJSON_GetObjectItem(root, "state");
             if (strcmp(state->valuestring, "start") == 0) {
+                ESP_LOGW(TAG, "--------------------GET START----------------------");
                 Schedule([this]() {
                     aborted_ = false;
                     if (device_state_ == kDeviceStateIdle || device_state_ == kDeviceStateListening) {
@@ -424,6 +425,7 @@ void Application::Start() {
                     }
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
+                ESP_LOGW(TAG, "--------------------GET STOP----------------------");
                 Schedule([this]() {
                     if (device_state_ == kDeviceStateSpeaking) {
                         if (listening_mode_ == kListeningModeManualStop) {
@@ -627,7 +629,7 @@ void Application::OnWakeWordDetected() {
 }
 
 void Application::AbortSpeaking(AbortReason reason) {
-    ESP_LOGI(TAG, "Abort speaking");
+    ESP_LOGW(TAG, "======================Abort speaking===========================");
     aborted_ = true;
     protocol_->SendAbortSpeaking(reason);
 }
