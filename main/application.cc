@@ -1,6 +1,10 @@
 #include "application.h"
 #include "board.h"
 #include "display.h"
+#include "mqtt_protocol.h"
+
+// 前向声明
+class LichuangDevBoard;
 #include "system_info.h"
 #include "audio_codec.h"
 #include "mqtt_protocol.h"
@@ -354,6 +358,9 @@ void Application::Start() {
 
     /* Start the clock timer to update the status bar */
     esp_timer_start_periodic(clock_timer_handle_, 1000000);
+
+    /* Initialize IMU sensor */
+    InitializeIMU();
 
     /* Wait for the network to be ready */
     board.StartNetwork();
@@ -782,3 +789,106 @@ void Application::SetAecMode(AecMode mode) {
 void Application::PlaySound(const std::string_view& sound) {
     audio_service_.PlaySound(sound);
 }
+
+void Application::InitializeIMU() {
+    auto& board = Board::GetInstance();
+
+    // 尝试获取IMU传感器
+    ESP_LOGI(TAG, "Initializing IMU sensor...");
+    imu_sensor_ = board.GetIMUSensor();
+    if (imu_sensor_) {
+        if (imu_sensor_->IsInitialized()) {
+            ESP_LOGI(TAG, "IMU sensor initialized successfully");
+            ESP_LOGI(TAG, "IMU sensor type: QMI8658, I2C address: 0x6A");
+
+            // 创建IMU定时器，每100ms读取一次数据
+            esp_timer_create_args_t imu_timer_args = {
+                .callback = [](void* arg) {
+                    static_cast<Application*>(arg)->OnIMUTimer();
+                },
+                .arg = this,
+                .dispatch_method = ESP_TIMER_TASK,
+                .name = "imu_timer",
+                .skip_unhandled_events = true
+            };
+
+            esp_err_t ret = esp_timer_create(&imu_timer_args, &imu_timer_handle_);
+            if (ret == ESP_OK) {
+                esp_timer_start_periodic(imu_timer_handle_, 100000); // 100ms
+                ESP_LOGI(TAG, "IMU timer started (100ms interval)");
+                ESP_LOGI(TAG, "IMU data will be logged every 1 second");
+            } else {
+                ESP_LOGE(TAG, "Failed to create IMU timer: %s", esp_err_to_name(ret));
+            }
+        } else {
+            ESP_LOGW(TAG, "IMU sensor not available or not initialized");
+        }
+    } else {
+        ESP_LOGD(TAG, "Board does not support IMU sensor");
+    }
+}
+
+void Application::OnIMUTimer() {
+    if (!imu_sensor_ || !imu_sensor_->IsInitialized()) {
+        return;
+    }
+
+    static int log_counter = 0;
+    t_sQMI8658 imu_data;
+
+    if (imu_sensor_->ReadMotionData(&imu_data)) {
+        // 每5次读取（0.5秒）打印一次详细数据
+        if (++log_counter >= 5) {
+            // 换算系数
+            const float ACC_LSB_TO_G = 1.0f / 8192.0f;
+            const float GYR_LSB_TO_DPS = 1.0f / 64.0f;
+
+            // 计算换算后的物理单位值
+            float acc_x_g = imu_data.acc_x * ACC_LSB_TO_G;
+            float acc_y_g = imu_data.acc_y * ACC_LSB_TO_G;
+            float acc_z_g = imu_data.acc_z * ACC_LSB_TO_G;
+            float gyr_x_dps = imu_data.gyr_x * GYR_LSB_TO_DPS;
+            float gyr_y_dps = imu_data.gyr_y * GYR_LSB_TO_DPS;
+            float gyr_z_dps = imu_data.gyr_z * GYR_LSB_TO_DPS;
+
+            ESP_LOGI(TAG, "=== IMU Data ===");
+            ESP_LOGI(TAG, "Accelerometer: X=%.4fg, Y=%.4fg, Z=%.4fg",
+                     acc_x_g, acc_y_g, acc_z_g);
+            ESP_LOGI(TAG, "Gyroscope: X=%.4f°/s, Y=%.4f°/s, Z=%.4f°/s",
+                     gyr_x_dps, gyr_y_dps, gyr_z_dps);
+            ESP_LOGI(TAG, "Angles: X=%.4f°, Y=%.4f°, Z=%.4f°",
+                     imu_data.AngleX, imu_data.AngleY, imu_data.AngleZ);
+            ESP_LOGI(TAG, "Motion Level: %d (%s)", imu_data.motion,
+                     imu_data.motion == 0 ? "IDLE" :
+                     imu_data.motion == 1 ? "SLIGHT" :
+                     imu_data.motion == 2 ? "MODERATE" : "INTENSE");
+            ESP_LOGI(TAG, "===============");
+            log_counter = 0;
+        }
+
+        // 运动检测：立即报告中等以上运动
+        // if (imu_data.motion > MOTION_LEVEL_SLIGHT) {
+        //     ESP_LOGW(TAG, "Motion detected! Level: %d (%s)",
+        //              imu_data.motion,
+        //              imu_data.motion == 2 ? "MODERATE" : "INTENSE");
+        // }
+
+        // 通过MQTT每5次读取（0.5秒）发送IMU数据
+        static int mqtt_counter = 0;
+        if (++mqtt_counter >= 5) {
+            auto* mqtt_protocol = static_cast<MqttProtocol*>(protocol_.get());
+            if (mqtt_protocol) {
+                mqtt_protocol->SendImuStatesAndValue(imu_data, 0);
+            }
+            mqtt_counter = 0;
+        }
+    } else {
+        // 读取失败时的错误日志
+        static int error_counter = 0;
+        if (++error_counter >= 50) { // 每5秒报告一次错误
+            ESP_LOGE(TAG, "Failed to read IMU data");
+            error_counter = 0;
+        }
+    }
+}
+

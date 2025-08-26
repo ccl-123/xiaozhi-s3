@@ -16,6 +16,7 @@
 #include "ota.h"
 #include "audio_service.h"
 #include "device_state_event.h"
+#include "qmi8658.h"
 
 #define MAIN_EVENT_SCHEDULE (1 << 0)
 #define MAIN_EVENT_SEND_AUDIO (1 << 1)
@@ -81,11 +82,19 @@ private:
     int clock_ticks_ = 0;
     TaskHandle_t check_new_version_task_handle_ = nullptr;
 
+    // IMU相关
+    QMI8658* imu_sensor_ = nullptr;
+    esp_timer_handle_t imu_timer_handle_ = nullptr;
+
     void OnWakeWordDetected();
     void CheckNewVersion(Ota& ota);
     void ShowActivationCode(const std::string& code, const std::string& message);
     void OnClockTimer();
     void SetListeningMode(ListeningMode mode);
+
+    // IMU相关方法
+    void InitializeIMU();
+    void OnIMUTimer();
 };
 
 #endif // _APPLICATION_H_

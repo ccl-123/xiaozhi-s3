@@ -338,3 +338,83 @@ std::string MqttProtocol::LoadLanguageTypeFromNVS(const std::string& default_lan
 bool MqttProtocol::IsAudioChannelOpened() const {
     return mqtt_ != nullptr && mqtt_->IsConnected() && !error_occurred_ && !IsTimeout();
 }
+
+void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_value) {
+    if (mqtt_ == nullptr || !mqtt_->IsConnected()) {
+        ESP_LOGE(TAG, "MQTT client not connected");
+        return;
+    }
+
+    if (user_id3_.empty()) {
+        ESP_LOGE(TAG, "User ID is empty");
+        return;
+    }
+
+    // 换算系数
+    const float ACC_LSB_TO_G = 1.0f / 8192.0f;      // ±4g量程，16位ADC
+    const float GYR_LSB_TO_DPS = 1.0f / 64.0f;      // ±512dps量程，16位ADC
+
+    // 计算换算后的物理单位值
+    float acc_x_g = imu_data.acc_x * ACC_LSB_TO_G;
+    float acc_y_g = imu_data.acc_y * ACC_LSB_TO_G;
+    float acc_z_g = imu_data.acc_z * ACC_LSB_TO_G;
+    float gyr_x_dps = imu_data.gyr_x * GYR_LSB_TO_DPS;
+    float gyr_y_dps = imu_data.gyr_y * GYR_LSB_TO_DPS;
+    float gyr_z_dps = imu_data.gyr_z * GYR_LSB_TO_DPS;
+
+    // 构建JSON消息
+    cJSON* root = cJSON_CreateObject();
+    if (root == NULL) {
+        ESP_LOGE(TAG, "Failed to create JSON object");
+        return;
+    }
+
+    // 添加运动类型和触摸值
+    cJSON_AddNumberToObject(root, "imu_type", imu_data.motion);
+    cJSON_AddNumberToObject(root, "touch_value", touch_value);
+
+    // 四舍五入到4位小数
+    float acc_x_rounded = roundf(acc_x_g * 10000.0f) / 10000.0f;
+    float acc_y_rounded = roundf(acc_y_g * 10000.0f) / 10000.0f;
+    float acc_z_rounded = roundf(acc_z_g * 10000.0f) / 10000.0f;
+    float gyr_x_rounded = roundf(gyr_x_dps * 10000.0f) / 10000.0f;
+    float gyr_y_rounded = roundf(gyr_y_dps * 10000.0f) / 10000.0f;
+    float gyr_z_rounded = roundf(gyr_z_dps * 10000.0f) / 10000.0f;
+    float angle_x_rounded = roundf(imu_data.AngleX * 10000.0f) / 10000.0f;
+    float angle_y_rounded = roundf(imu_data.AngleY * 10000.0f) / 10000.0f;
+    float angle_z_rounded = roundf(imu_data.AngleZ * 10000.0f) / 10000.0f;
+
+    // 使用换算后的物理单位值（4位小数精度）
+    cJSON_AddNumberToObject(root, "acc_x", acc_x_rounded);   // g单位
+    cJSON_AddNumberToObject(root, "acc_y", acc_y_rounded);   // g单位
+    cJSON_AddNumberToObject(root, "acc_z", acc_z_rounded);   // g单位
+    cJSON_AddNumberToObject(root, "gyr_x", gyr_x_rounded);   // 度/秒
+    cJSON_AddNumberToObject(root, "gyr_y", gyr_y_rounded);   // 度/秒
+    cJSON_AddNumberToObject(root, "gyr_z", gyr_z_rounded);   // 度/秒
+    // 添加角度值（4位小数精度）
+    cJSON_AddNumberToObject(root, "angle_x", angle_x_rounded);  // 度
+    cJSON_AddNumberToObject(root, "angle_y", angle_y_rounded);  // 度
+    cJSON_AddNumberToObject(root, "angle_z", angle_z_rounded);  // 度
+
+    // 添加设备ID
+    cJSON_AddStringToObject(root, "device_id", user_id3_.c_str());
+
+    // 将JSON转换为字符串
+    char* message_str = cJSON_PrintUnformatted(root);
+    if (message_str == NULL) {
+        ESP_LOGE(TAG, "Failed to print JSON");
+        cJSON_Delete(root);
+        return;
+    }
+
+    std::string message(message_str);
+    std::string imu_topic = "doll/imu_status";
+
+
+    // 发布消息
+    mqtt_->Publish(imu_topic, message);
+
+    // 清理资源
+    cJSON_free(message_str);
+    cJSON_Delete(root);
+}

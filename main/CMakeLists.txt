@@ -11,6 +11,7 @@ set(SOURCES "audio/audio_codec.cc"
             "led/single_led.cc"
             "led/circular_strip.cc"
             "led/gpio_led.cc"
+            "imu/qmi8658.cc"
             "display/display.cc"
             "display/lcd_display.cc"
             "display/oled_display.cc"
@@ -26,7 +27,7 @@ set(SOURCES "audio/audio_codec.cc"
             "main.cc"
             )
 
-set(INCLUDE_DIRS "." "display" "audio" "protocols")
+set(INCLUDE_DIRS "." "display" "audio" "protocols" "imu")
 
 # 添加板级公共文件
 file(GLOB BOARD_COMMON_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/boards/common/*.cc)

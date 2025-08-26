@@ -11,6 +11,10 @@
 #include "led/led.h"
 #include "backlight.h"
 #include "camera.h"
+#include "i2c_device.h"
+
+// 前向声明
+class QMI8658;
 
 void* create_board();
 class AudioCodec;
@@ -42,6 +46,8 @@ public:
     virtual bool GetTemperature(float& esp32temp);
     virtual Display* GetDisplay();
     virtual Camera* GetCamera();
+    virtual I2cDevice* GetI2cDevice() { return nullptr; }
+    virtual QMI8658* GetIMUSensor() { return nullptr; }
     virtual NetworkInterface* GetNetwork() = 0;
     virtual void StartNetwork() = 0;
     virtual const char* GetNetworkStateIcon() = 0;
