@@ -8,7 +8,11 @@ QMI8658::QMI8658(i2c_master_bus_handle_t i2c_bus, uint8_t addr)
     , last_acc_x_fixed_(0)
     , last_acc_y_fixed_(0)
     , last_acc_z_fixed_(0)
-    , first_run_(true) {
+    , first_run_(true)
+    , gyr_offset_x_(0.0f)
+    , gyr_offset_y_(0.0f)
+    , gyr_offset_z_(0.0f)
+    , calibrated_(false) {
 }
 
 QMI8658::~QMI8658() {
@@ -70,6 +74,11 @@ bool QMI8658::Initialize() {
     
     initialized_ = true;
     ESP_LOGI(TAG, "QMI8658 initialized successfully");
+
+    // 初始化完成后进行陀螺仪校准
+    ESP_LOGI(TAG, "Starting gyroscope calibration...");
+    CalibrateGyroscope();
+
     return true;
 }
 
@@ -197,4 +206,50 @@ bool QMI8658::ReadMotionData(t_sQMI8658 *data) {
     CalculateAngles(data);
     
     return true;
+}
+
+void QMI8658::CalibrateGyroscope() {
+    if (!initialized_) {
+        ESP_LOGE(TAG, "Device not initialized, cannot calibrate");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Calibrating gyroscope... Please keep device stationary for 3 seconds");
+
+    const int calibration_samples = 100;  // 采集100个样本
+    float sum_x = 0, sum_y = 0, sum_z = 0;
+    int valid_samples = 0;
+
+    for (int i = 0; i < calibration_samples; i++) {
+        t_sQMI8658 data;
+        if (ReadAccAndGyr(&data)) {
+            sum_x += data.gyr_x;
+            sum_y += data.gyr_y;
+            sum_z += data.gyr_z;
+            valid_samples++;
+        }
+        vTaskDelay(30 / portTICK_PERIOD_MS);  // 30ms间隔
+    }
+
+    if (valid_samples > 50) {  // 至少需要50个有效样本
+        // 计算平均偏移值（原始数据）
+        float avg_x = sum_x / valid_samples;
+        float avg_y = sum_y / valid_samples;
+        float avg_z = sum_z / valid_samples;
+
+        // 转换为物理单位的偏移值
+        const float GYR_LSB_TO_DPS = 1.0f / 64.0f;
+        gyr_offset_x_ = avg_x * GYR_LSB_TO_DPS;
+        gyr_offset_y_ = avg_y * GYR_LSB_TO_DPS;
+        gyr_offset_z_ = avg_z * GYR_LSB_TO_DPS;
+
+        calibrated_ = true;
+
+        ESP_LOGI(TAG, "Gyroscope calibration completed");
+        ESP_LOGI(TAG, "Offsets: X=%.2f°/s, Y=%.2f°/s, Z=%.2f°/s",
+                 gyr_offset_x_, gyr_offset_y_, gyr_offset_z_);
+    } else {
+        ESP_LOGE(TAG, "Gyroscope calibration failed: insufficient valid samples (%d)", valid_samples);
+        calibrated_ = false;
+    }
 }

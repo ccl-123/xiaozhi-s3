@@ -128,6 +128,12 @@ private:
     int32_t last_acc_z_fixed_;
     bool first_run_;
 
+    // 陀螺仪零偏校准
+    float gyr_offset_x_;
+    float gyr_offset_y_;
+    float gyr_offset_z_;
+    bool calibrated_;
+
     // 内部函数
     motion_level_t DetectMotion(t_sQMI8658 *p);
 
@@ -138,6 +144,10 @@ public:
     // 初始化和配置
     bool Initialize();
     bool IsInitialized() const { return initialized_; }
+
+    // 陀螺仪校准
+    void CalibrateGyroscope();
+    bool IsCalibrated() const { return calibrated_; }
     
     // 数据读取
     bool ReadAccAndGyr(t_sQMI8658 *data);
