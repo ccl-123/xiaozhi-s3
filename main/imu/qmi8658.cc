@@ -113,7 +113,10 @@ bool QMI8658::ReadAccAndGyr(t_sQMI8658 *data) {
     data->gyr_x = buf[3];
     data->gyr_y = buf[4];
     data->gyr_z = buf[5];
-    
+
+    // 转换为物理单位
+    ConvertToPhysicalUnits(data);
+
     return true;
 }
 
@@ -170,22 +173,27 @@ motion_level_t QMI8658::DetectMotion(t_sQMI8658 *p) {
 
 void QMI8658::CalculateAngles(t_sQMI8658 *data) {
     if (!data) return;
-    
+
     float temp;
-    
-    // 根据加速度计算倾角值并转换为角度
-    temp = (float)data->acc_x / sqrt(((float)data->acc_y * (float)data->acc_y +
-                                     (float)data->acc_z * (float)data->acc_z));
+
+    // 根据加速度计算倾角值并转换为角度（使用物理单位值以保持代码一致性）
+    temp = data->acc_x_g / sqrt((data->acc_y_g * data->acc_y_g +
+                                data->acc_z_g * data->acc_z_g));
     data->AngleX = atan(temp) * 57.29578f;  // 180/π=57.29578
-    
-    temp = (float)data->acc_y / sqrt(((float)data->acc_x * (float)data->acc_x +
-                                     (float)data->acc_z * (float)data->acc_z));
+
+    temp = data->acc_y_g / sqrt((data->acc_x_g * data->acc_x_g +
+                                data->acc_z_g * data->acc_z_g));
     data->AngleY = atan(temp) * 57.29578f;
-    
-    temp = sqrt(((float)data->acc_x * (float)data->acc_x +
-                 (float)data->acc_y * (float)data->acc_y)) /
-           (float)data->acc_z;
+
+    temp = sqrt((data->acc_x_g * data->acc_x_g +
+                 data->acc_y_g * data->acc_y_g)) /
+           data->acc_z_g;
     data->AngleZ = atan(temp) * 57.29578f;
+
+    // 角度数据四舍五入到4位小数
+    data->AngleX = roundf(data->AngleX * 10000.0f) / 10000.0f;
+    data->AngleY = roundf(data->AngleY * 10000.0f) / 10000.0f;
+    data->AngleZ = roundf(data->AngleZ * 10000.0f) / 10000.0f;
 }
 
 motion_level_t QMI8658::GetMotionLevel(t_sQMI8658 *data) {
@@ -206,6 +214,32 @@ bool QMI8658::ReadMotionData(t_sQMI8658 *data) {
     CalculateAngles(data);
     
     return true;
+}
+
+void QMI8658::ConvertToPhysicalUnits(t_sQMI8658 *data) {
+    if (!data) return;
+
+    // 换算系数定义
+    const float ACC_LSB_TO_G = 1.0f / 8192.0f;      // ±4g量程，16位ADC
+    const float GYR_LSB_TO_DPS = 1.0f / 64.0f;      // ±512dps量程，16位ADC
+
+    // 转换加速度计数据到g单位
+    data->acc_x_g = data->acc_x * ACC_LSB_TO_G;
+    data->acc_y_g = data->acc_y * ACC_LSB_TO_G;
+    data->acc_z_g = data->acc_z * ACC_LSB_TO_G;
+
+    // 转换陀螺仪数据到°/s单位
+    data->gyr_x_dps = data->gyr_x * GYR_LSB_TO_DPS;
+    data->gyr_y_dps = data->gyr_y * GYR_LSB_TO_DPS;
+    data->gyr_z_dps = data->gyr_z * GYR_LSB_TO_DPS;
+
+    // 四舍五入到4位小数
+    data->acc_x_g = roundf(data->acc_x_g * 10000.0f) / 10000.0f;
+    data->acc_y_g = roundf(data->acc_y_g * 10000.0f) / 10000.0f;
+    data->acc_z_g = roundf(data->acc_z_g * 10000.0f) / 10000.0f;
+    data->gyr_x_dps = roundf(data->gyr_x_dps * 10000.0f) / 10000.0f;
+    data->gyr_y_dps = roundf(data->gyr_y_dps * 10000.0f) / 10000.0f;
+    data->gyr_z_dps = roundf(data->gyr_z_dps * 10000.0f) / 10000.0f;
 }
 
 void QMI8658::CalibrateGyroscope() {

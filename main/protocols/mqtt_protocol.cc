@@ -350,17 +350,13 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
         return;
     }
 
-    // 换算系数
-    const float ACC_LSB_TO_G = 1.0f / 8192.0f;      // ±4g量程，16位ADC
-    const float GYR_LSB_TO_DPS = 1.0f / 64.0f;      // ±512dps量程，16位ADC
-
-    // 计算换算后的物理单位值
-    float acc_x_g = imu_data.acc_x * ACC_LSB_TO_G;
-    float acc_y_g = imu_data.acc_y * ACC_LSB_TO_G;
-    float acc_z_g = imu_data.acc_z * ACC_LSB_TO_G;
-    float gyr_x_dps = imu_data.gyr_x * GYR_LSB_TO_DPS;
-    float gyr_y_dps = imu_data.gyr_y * GYR_LSB_TO_DPS;
-    float gyr_z_dps = imu_data.gyr_z * GYR_LSB_TO_DPS;
+    // 直接使用QMI8658类中已转换的物理单位数据
+    float acc_x_g = imu_data.acc_x_g;
+    float acc_y_g = imu_data.acc_y_g;
+    float acc_z_g = imu_data.acc_z_g;
+    float gyr_x_dps = imu_data.gyr_x_dps;
+    float gyr_y_dps = imu_data.gyr_y_dps;
+    float gyr_z_dps = imu_data.gyr_z_dps;
 
     // 构建JSON消息
     cJSON* root = cJSON_CreateObject();
@@ -371,44 +367,35 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
 
     // 添加运动类型和触摸值
     cJSON_AddNumberToObject(root, "imu_type", imu_data.motion);
+
+    // 使用已转换的物理单位值（QMI8658类中已处理精度）
+    cJSON_AddNumberToObject(root, "gx", gyr_x_dps);          // °/s单位
+    cJSON_AddNumberToObject(root, "gy", gyr_y_dps);          // °/s单位
+    cJSON_AddNumberToObject(root, "gz", gyr_z_dps);          // °/s单位
+    cJSON_AddNumberToObject(root, "ax", acc_x_g);            // g单位
+    cJSON_AddNumberToObject(root, "ay", acc_y_g);            // g单位
+    cJSON_AddNumberToObject(root, "az", acc_z_g);            // g单位
+
+
+    // 角度数据（IMU模块中已处理精度）
+    cJSON_AddNumberToObject(root, "angle_x", imu_data.AngleX); // °单位
+    cJSON_AddNumberToObject(root, "angle_y", imu_data.AngleY); // °单位
+    cJSON_AddNumberToObject(root, "angle_z", imu_data.AngleZ); // °单位
+
     cJSON_AddNumberToObject(root, "touch_value", touch_value);
-
-    // 四舍五入到4位小数
-    float acc_x_rounded = roundf(acc_x_g * 10000.0f) / 10000.0f;
-    float acc_y_rounded = roundf(acc_y_g * 10000.0f) / 10000.0f;
-    float acc_z_rounded = roundf(acc_z_g * 10000.0f) / 10000.0f;
-    float gyr_x_rounded = roundf(gyr_x_dps * 10000.0f) / 10000.0f;
-    float gyr_y_rounded = roundf(gyr_y_dps * 10000.0f) / 10000.0f;
-    float gyr_z_rounded = roundf(gyr_z_dps * 10000.0f) / 10000.0f;
-    float angle_x_rounded = roundf(imu_data.AngleX * 10000.0f) / 10000.0f;
-    float angle_y_rounded = roundf(imu_data.AngleY * 10000.0f) / 10000.0f;
-    float angle_z_rounded = roundf(imu_data.AngleZ * 10000.0f) / 10000.0f;
-
-    // 使用换算后的物理单位值（4位小数精度）
-    cJSON_AddNumberToObject(root, "acc_x", acc_x_rounded);   // g单位
-    cJSON_AddNumberToObject(root, "acc_y", acc_y_rounded);   // g单位
-    cJSON_AddNumberToObject(root, "acc_z", acc_z_rounded);   // g单位
-    cJSON_AddNumberToObject(root, "gyr_x", gyr_x_rounded);   // 度/秒
-    cJSON_AddNumberToObject(root, "gyr_y", gyr_y_rounded);   // 度/秒
-    cJSON_AddNumberToObject(root, "gyr_z", gyr_z_rounded);   // 度/秒
-    // 添加角度值（4位小数精度）
-    cJSON_AddNumberToObject(root, "angle_x", angle_x_rounded);  // 度
-    cJSON_AddNumberToObject(root, "angle_y", angle_y_rounded);  // 度
-    cJSON_AddNumberToObject(root, "angle_z", angle_z_rounded);  // 度
-
     // 添加设备ID
     cJSON_AddStringToObject(root, "device_id", user_id3_.c_str());
 
-    // 打印IMU数据到日志（使用已换算的值，避免重复计算）
+    // 打印IMU数据到日志（使用已转换的物理单位值）
     static int log_counter = 0;
     if (++log_counter >= 1) {  // 每1次发送（0.5秒）打印一次详细数据
         ESP_LOGI(TAG, "===== IMU Data =====");
         ESP_LOGI(TAG, "Accelerometer: X=%.4fg, Y=%.4fg, Z=%.4fg",
-                 acc_x_rounded, acc_y_rounded, acc_z_rounded);
+                 acc_x_g, acc_y_g, acc_z_g);
         ESP_LOGI(TAG, "Gyroscope: X=%.4f°/s, Y=%.4f°/s, Z=%.4f°/s",
-                 gyr_x_rounded, gyr_y_rounded, gyr_z_rounded);
+                 gyr_x_dps, gyr_y_dps, gyr_z_dps);
         ESP_LOGI(TAG, "Angles: X=%.4f°, Y=%.4f°, Z=%.4f°",
-                 angle_x_rounded, angle_y_rounded, angle_z_rounded);
+                 imu_data.AngleX, imu_data.AngleY, imu_data.AngleZ);
         ESP_LOGI(TAG, "Motion Level: %d (%s)", imu_data.motion,
                  imu_data.motion == 0 ? "IDLE" :
                  imu_data.motion == 1 ? "SLIGHT" :
