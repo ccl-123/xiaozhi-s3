@@ -1,6 +1,7 @@
 #include "application.h"
 #include "board.h"
 #include "display.h"
+#include "mqtt_protocol.h"
 
 // 前向声明
 class LichuangDevBoard;
@@ -390,12 +391,13 @@ void Application::Start() {
         last_error_message_ = message;
         xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
     });
-    static uint32_t s_udp_pkt_id = 0;
+    // static uint32_t s_udp_pkt_id = 0; // 未使用，注释掉
     static auto s_udp_last_time = std::chrono::steady_clock::now();
 
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
         auto now = std::chrono::steady_clock::now();
         auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(now - s_udp_last_time).count();
+        (void)dt; // 避免未使用变量警告
         s_udp_last_time = now;
         //ESP_LOGI(TAG, "[AUDIO-RX] pkt#%" PRIu32 ", Δ=%dms", ++s_udp_pkt_id, (int)dt);
         if (device_state_ == kDeviceStateSpeaking) {
@@ -832,36 +834,19 @@ void Application::OnIMUTimer() {
         return;
     }
 
-    static int log_counter = 0;
+
     t_sQMI8658 imu_data;
 
     if (imu_sensor_->ReadMotionData(&imu_data)) {
-        // 每10次读取（1秒）打印一次详细数据
-        if (++log_counter >= 10) {
-            ESP_LOGI(TAG, "=== IMU Data ===");
-            ESP_LOGI(TAG, "Accelerometer: X=%d, Y=%d, Z=%d",
-                     imu_data.acc_x, imu_data.acc_y, imu_data.acc_z);
-            ESP_LOGI(TAG, "Gyroscope: X=%d, Y=%d, Z=%d",
-                     imu_data.gyr_x, imu_data.gyr_y, imu_data.gyr_z);
-            ESP_LOGI(TAG, "Angles: X=%.2f°, Y=%.2f°, Z=%.2f°",
-                     imu_data.AngleX, imu_data.AngleY, imu_data.AngleZ);
-            ESP_LOGI(TAG, "Motion Level: %d (%s)", imu_data.motion,
-                     imu_data.motion == 0 ? "IDLE" :
-                     imu_data.motion == 1 ? "SLIGHT" :
-                     imu_data.motion == 2 ? "MODERATE" : "INTENSE");
-            ESP_LOGI(TAG, "===============");
-            log_counter = 0;
+        // 通过MQTT每5次读取（0.5秒）发送IMU数据
+        static int mqtt_counter = 0;
+        if (++mqtt_counter >= 5) {
+            auto* mqtt_protocol = static_cast<MqttProtocol*>(protocol_.get());
+            if (mqtt_protocol) {
+                mqtt_protocol->SendImuStatesAndValue(imu_data, 0);
+            }
+            mqtt_counter = 0;
         }
-
-        // 运动检测：立即报告中等以上运动
-        if (imu_data.motion > MOTION_LEVEL_SLIGHT) {
-            ESP_LOGW(TAG, "Motion detected! Level: %d (%s)",
-                     imu_data.motion,
-                     imu_data.motion == 2 ? "MODERATE" : "INTENSE");
-        }
-
-        // 发送IMU数据到服务器（如果需要）
-        SendIMUData(imu_data);
     } else {
         // 读取失败时的错误日志
         static int error_counter = 0;
@@ -872,42 +857,3 @@ void Application::OnIMUTimer() {
     }
 }
 
-void Application::SendIMUData(const t_sQMI8658& data) {
-    if (!protocol_) {
-        return;
-    }
-
-    // 创建IMU数据JSON
-    cJSON* json = cJSON_CreateObject();
-    cJSON* imu_obj = cJSON_CreateObject();
-
-    cJSON_AddNumberToObject(imu_obj, "acc_x", data.acc_x);
-    cJSON_AddNumberToObject(imu_obj, "acc_y", data.acc_y);
-    cJSON_AddNumberToObject(imu_obj, "acc_z", data.acc_z);
-    cJSON_AddNumberToObject(imu_obj, "gyr_x", data.gyr_x);
-    cJSON_AddNumberToObject(imu_obj, "gyr_y", data.gyr_y);
-    cJSON_AddNumberToObject(imu_obj, "gyr_z", data.gyr_z);
-    cJSON_AddNumberToObject(imu_obj, "angle_x", data.AngleX);
-    cJSON_AddNumberToObject(imu_obj, "angle_y", data.AngleY);
-    cJSON_AddNumberToObject(imu_obj, "angle_z", data.AngleZ);
-    cJSON_AddNumberToObject(imu_obj, "motion", data.motion);
-
-    cJSON_AddItemToObject(json, "imu", imu_obj);
-
-    char* json_string = cJSON_Print(json);
-    if (json_string) {
-        // 这里可以根据需要发送到MQTT或WebSocket
-        // protocol_->SendMessage("imu_data", json_string);
-
-        // 每300次（30秒）打印一次JSON格式数据
-        static int json_log_counter = 0;
-        if (++json_log_counter >= 300) {
-            ESP_LOGI(TAG, "IMU JSON: %s", json_string);
-            json_log_counter = 0;
-        }
-
-        free(json_string);
-    }
-
-    cJSON_Delete(json);
-}

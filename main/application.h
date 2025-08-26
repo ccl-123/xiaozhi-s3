@@ -95,7 +95,6 @@ private:
     // IMU相关方法
     void InitializeIMU();
     void OnIMUTimer();
-    void SendIMUData(const t_sQMI8658& data);
 };
 
 #endif // _APPLICATION_H_

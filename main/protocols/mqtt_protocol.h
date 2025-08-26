@@ -5,6 +5,7 @@
 #include "protocol.h"
 #include <mqtt.h>
 #include <cJSON.h>
+#include "qmi8658.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include "system_info.h"
@@ -32,6 +33,9 @@ public:
 
     // 对齐旧项目：运行时更新语言时，动态更新发布主题
     void UpdateLanguage(const std::string& language);
+
+    // IMU数据发送方法
+    void SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_value = 0);
 
 private:
     EventGroupHandle_t event_group_handle_;
