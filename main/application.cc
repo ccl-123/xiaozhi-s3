@@ -1,6 +1,9 @@
 #include "application.h"
 #include "board.h"
 #include "display.h"
+
+// 前向声明
+class LichuangDevBoard;
 #include "system_info.h"
 #include "audio_codec.h"
 #include "mqtt_protocol.h"
@@ -354,6 +357,9 @@ void Application::Start() {
 
     /* Start the clock timer to update the status bar */
     esp_timer_start_periodic(clock_timer_handle_, 1000000);
+
+    /* Initialize IMU sensor */
+    InitializeIMU();
 
     /* Wait for the network to be ready */
     board.StartNetwork();
@@ -781,4 +787,127 @@ void Application::SetAecMode(AecMode mode) {
 
 void Application::PlaySound(const std::string_view& sound) {
     audio_service_.PlaySound(sound);
+}
+
+void Application::InitializeIMU() {
+    auto& board = Board::GetInstance();
+
+    // 尝试获取IMU传感器
+    ESP_LOGI(TAG, "Initializing IMU sensor...");
+    imu_sensor_ = board.GetIMUSensor();
+    if (imu_sensor_) {
+        if (imu_sensor_->IsInitialized()) {
+            ESP_LOGI(TAG, "IMU sensor initialized successfully");
+            ESP_LOGI(TAG, "IMU sensor type: QMI8658, I2C address: 0x6A");
+
+            // 创建IMU定时器，每100ms读取一次数据
+            esp_timer_create_args_t imu_timer_args = {
+                .callback = [](void* arg) {
+                    static_cast<Application*>(arg)->OnIMUTimer();
+                },
+                .arg = this,
+                .dispatch_method = ESP_TIMER_TASK,
+                .name = "imu_timer",
+                .skip_unhandled_events = true
+            };
+
+            esp_err_t ret = esp_timer_create(&imu_timer_args, &imu_timer_handle_);
+            if (ret == ESP_OK) {
+                esp_timer_start_periodic(imu_timer_handle_, 100000); // 100ms
+                ESP_LOGI(TAG, "IMU timer started (100ms interval)");
+                ESP_LOGI(TAG, "IMU data will be logged every 1 second");
+            } else {
+                ESP_LOGE(TAG, "Failed to create IMU timer: %s", esp_err_to_name(ret));
+            }
+        } else {
+            ESP_LOGW(TAG, "IMU sensor not available or not initialized");
+        }
+    } else {
+        ESP_LOGD(TAG, "Board does not support IMU sensor");
+    }
+}
+
+void Application::OnIMUTimer() {
+    if (!imu_sensor_ || !imu_sensor_->IsInitialized()) {
+        return;
+    }
+
+    static int log_counter = 0;
+    t_sQMI8658 imu_data;
+
+    if (imu_sensor_->ReadMotionData(&imu_data)) {
+        // 每10次读取（1秒）打印一次详细数据
+        if (++log_counter >= 10) {
+            ESP_LOGI(TAG, "=== IMU Data ===");
+            ESP_LOGI(TAG, "Accelerometer: X=%d, Y=%d, Z=%d",
+                     imu_data.acc_x, imu_data.acc_y, imu_data.acc_z);
+            ESP_LOGI(TAG, "Gyroscope: X=%d, Y=%d, Z=%d",
+                     imu_data.gyr_x, imu_data.gyr_y, imu_data.gyr_z);
+            ESP_LOGI(TAG, "Angles: X=%.2f°, Y=%.2f°, Z=%.2f°",
+                     imu_data.AngleX, imu_data.AngleY, imu_data.AngleZ);
+            ESP_LOGI(TAG, "Motion Level: %d (%s)", imu_data.motion,
+                     imu_data.motion == 0 ? "IDLE" :
+                     imu_data.motion == 1 ? "SLIGHT" :
+                     imu_data.motion == 2 ? "MODERATE" : "INTENSE");
+            ESP_LOGI(TAG, "===============");
+            log_counter = 0;
+        }
+
+        // 运动检测：立即报告中等以上运动
+        if (imu_data.motion > MOTION_LEVEL_SLIGHT) {
+            ESP_LOGW(TAG, "Motion detected! Level: %d (%s)",
+                     imu_data.motion,
+                     imu_data.motion == 2 ? "MODERATE" : "INTENSE");
+        }
+
+        // 发送IMU数据到服务器（如果需要）
+        SendIMUData(imu_data);
+    } else {
+        // 读取失败时的错误日志
+        static int error_counter = 0;
+        if (++error_counter >= 50) { // 每5秒报告一次错误
+            ESP_LOGE(TAG, "Failed to read IMU data");
+            error_counter = 0;
+        }
+    }
+}
+
+void Application::SendIMUData(const t_sQMI8658& data) {
+    if (!protocol_) {
+        return;
+    }
+
+    // 创建IMU数据JSON
+    cJSON* json = cJSON_CreateObject();
+    cJSON* imu_obj = cJSON_CreateObject();
+
+    cJSON_AddNumberToObject(imu_obj, "acc_x", data.acc_x);
+    cJSON_AddNumberToObject(imu_obj, "acc_y", data.acc_y);
+    cJSON_AddNumberToObject(imu_obj, "acc_z", data.acc_z);
+    cJSON_AddNumberToObject(imu_obj, "gyr_x", data.gyr_x);
+    cJSON_AddNumberToObject(imu_obj, "gyr_y", data.gyr_y);
+    cJSON_AddNumberToObject(imu_obj, "gyr_z", data.gyr_z);
+    cJSON_AddNumberToObject(imu_obj, "angle_x", data.AngleX);
+    cJSON_AddNumberToObject(imu_obj, "angle_y", data.AngleY);
+    cJSON_AddNumberToObject(imu_obj, "angle_z", data.AngleZ);
+    cJSON_AddNumberToObject(imu_obj, "motion", data.motion);
+
+    cJSON_AddItemToObject(json, "imu", imu_obj);
+
+    char* json_string = cJSON_Print(json);
+    if (json_string) {
+        // 这里可以根据需要发送到MQTT或WebSocket
+        // protocol_->SendMessage("imu_data", json_string);
+
+        // 每300次（30秒）打印一次JSON格式数据
+        static int json_log_counter = 0;
+        if (++json_log_counter >= 300) {
+            ESP_LOGI(TAG, "IMU JSON: %s", json_string);
+            json_log_counter = 0;
+        }
+
+        free(json_string);
+    }
+
+    cJSON_Delete(json);
 }

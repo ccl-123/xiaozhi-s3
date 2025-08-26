@@ -4,7 +4,8 @@
 #include "application.h"
 #include "button.h"
 #include "config.h"
-// #include "i2c_device.h"  // 已移除PCA9557依赖，不再需要
+#include "i2c_device.h"  // IMU需要I2C设备
+#include "qmi8658.h"     // IMU传感器
 
 
 #include <esp_log.h>
@@ -78,6 +79,7 @@ private:
     i2c_master_bus_handle_t i2c_bus_;
     Button boot_button_;
     LcdDisplay* display_;
+    QMI8658* imu_sensor_;
 
     void InitializeI2c() {
         // Initialize I2C peripheral
@@ -94,6 +96,12 @@ private:
             },
         };
         ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &i2c_bus_));
+
+        // 初始化IMU传感器
+        imu_sensor_ = new QMI8658(i2c_bus_, IMU_I2C_ADDR);
+        if (!imu_sensor_->Initialize()) {
+            ESP_LOGW(TAG, "Failed to initialize IMU sensor, continuing without IMU");
+        }
     }
 
     void InitializeSpi() {
@@ -195,6 +203,13 @@ public:
         return &backlight;
     }
 
+    virtual I2cDevice* GetI2cDevice() override {
+        return imu_sensor_;  // QMI8658继承自I2cDevice
+    }
+
+    virtual QMI8658* GetIMUSensor() override {
+        return imu_sensor_;
+    }
 
 };
 
