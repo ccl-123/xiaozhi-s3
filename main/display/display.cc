@@ -124,7 +124,7 @@ void Display::UpdateStatusBar(bool update_all) {
                 strftime(time_str, sizeof(time_str), "%H:%M  ", tm);
                 SetStatus(time_str);
             } else {
-                ESP_LOGW(TAG, "System time is not set, tm_year: %d", tm->tm_year);
+                //ESP_LOGW(TAG, "System time is not set, tm_year: %d", tm->tm_year);
             }
         }
     }

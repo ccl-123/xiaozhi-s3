@@ -61,20 +61,21 @@ std::string SystemInfo::GetMacAddressNoColon() {
 }
 
 std::string SystemInfo::GetMacAddressDecimal() {
-    uint8_t mac[6];
-#if CONFIG_IDF_TARGET_ESP32P4
-    esp_wifi_get_mac(WIFI_IF_STA, mac);
-#else
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-#endif
-    // 将MAC地址视为48位无符号整数，转为十进制字符串
-    uint64_t value = 0;
-    for (int i = 0; i < 6; ++i) {
-        value = (value << 8) | mac[i];
+    // 获取不带冒号的MAC地址
+    std::string mac_no_colon = GetMacAddressNoColon();
+
+    // 将不带冒号的16进制字符串转换为10进制数字
+    unsigned long long mac_decimal = std::stoull(mac_no_colon, nullptr, 16);
+
+    // 将10进制转换为字符串
+    std::string result = std::to_string(mac_decimal);
+
+    // 如果长度小于18位，末尾填充0（对齐旧版本 Aibox_ESP32_C3_NEW）
+    while (result.length() < 18) {
+        result += "0";
     }
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%llu", (unsigned long long)value);
-    return std::string(buf);
+
+    return result;
 }
 
 esp_err_t SystemInfo::PrintTaskCpuUsage(TickType_t xTicksToWait) {
@@ -171,5 +172,5 @@ void SystemInfo::PrintTaskList() {
 void SystemInfo::PrintHeapStats() {
     int free_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     int min_free_sram = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
-    ESP_LOGI(TAG, "free sram: %u minimal sram: %u", free_sram, min_free_sram);
+    ESP_LOGW(TAG, "free sram: %u minimal sram: %u", free_sram, min_free_sram);
 }

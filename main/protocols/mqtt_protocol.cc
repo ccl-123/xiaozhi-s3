@@ -48,6 +48,8 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
     languagesType_topic_ = std::string("doll/set/") + user_id3_;
     moan_topic_ = std::string("doll/control_moan/") + user_id3_;
 
+    ESP_LOGI(TAG, "Device ID (MAC decimal): %s", user_id3_.c_str());
+
     // If publish_topic_ is empty, build it like old version: stt/doll/{user_id3}/{language}
     if (publish_topic_.empty()) {
         auto lang = LoadLanguageTypeFromNVS("zh");
@@ -61,6 +63,15 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
             SetError(Lang::Strings::SERVER_NOT_FOUND);
         }
         return false;
+    }
+
+    // 保存当前语言，便于后续 UpdateLanguage 使用（仅当走旧规则时）
+    if (publish_topic_.rfind("stt/doll/", 0) == 0) {
+        // 按旧规则生成的，解析出语言部分（最后一个'/'后的内容）
+        auto pos = publish_topic_.find_last_of('/');
+        if (pos != std::string::npos && pos + 1 < publish_topic_.size()) {
+            languagesType_ = publish_topic_.substr(pos + 1);
+        }
     }
 
     auto network = Board::GetInstance().GetNetwork();
@@ -161,25 +172,50 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
 
     ESP_LOGI(TAG, "Connected to endpoint");
 
+    // 统一打印 MQTT 主题配置
+    ESP_LOGI(TAG, "MQTT Topics:");
+    ESP_LOGI(TAG, "  Publish: %s", publish_topic_.c_str());
+    if (!subscribe_topic_.empty()) {
+        ESP_LOGI(TAG, "  Subscribe: %s", subscribe_topic_.c_str());
+    }
+    ESP_LOGI(TAG, "  Control: %s", phone_control_topic_.c_str());
+    ESP_LOGI(TAG, "  Language: %s", languagesType_topic_.c_str());
+    ESP_LOGI(TAG, "  Moan: %s", moan_topic_.c_str());
+
     // 旧版对齐：分主题订阅
     if (!subscribe_topic_.empty()) {
         mqtt_->Subscribe(subscribe_topic_, 1);
-        ESP_LOGI(TAG, "Subscribed: %s", subscribe_topic_.c_str());
+        ESP_LOGI(TAG, "Subscribed to %s (QoS 1)", subscribe_topic_.c_str());
     }
     if (!phone_control_topic_.empty()) {
         mqtt_->Subscribe(phone_control_topic_, 0);
-        ESP_LOGI(TAG, "Subscribed: %s", phone_control_topic_.c_str());
+        ESP_LOGI(TAG, "Subscribed to %s (QoS 0)", phone_control_topic_.c_str());
     }
     if (!languagesType_topic_.empty()) {
         mqtt_->Subscribe(languagesType_topic_, 0);
-        ESP_LOGI(TAG, "Subscribed: %s", languagesType_topic_.c_str());
+        ESP_LOGI(TAG, "Subscribed to %s (QoS 0)", languagesType_topic_.c_str());
     }
     if (!moan_topic_.empty()) {
         mqtt_->Subscribe(moan_topic_, 0);
-        ESP_LOGI(TAG, "Subscribed: %s", moan_topic_.c_str());
+        ESP_LOGI(TAG, "Subscribed to %s (QoS 0)", moan_topic_.c_str());
     }
 
     return true;
+}
+
+// 对齐旧项目：当收到语言变更时，动态更新发布主题（仅在未配置自定义 publish_topic 时生效）
+void MqttProtocol::UpdateLanguage(const std::string& language) {
+    languagesType_ = language;
+    if (publish_topic_.empty() || publish_topic_.rfind("stt/doll/", 0) == 0) {
+        // 主题按旧规则：stt/doll/{user_id3}/{language}
+        if (user_id3_.empty()) {
+            user_id3_ = SystemInfo::GetMacAddressDecimal();
+        }
+        publish_topic_ = std::string("stt/doll/") + user_id3_ + "/" + language;
+        ESP_LOGI(TAG, "Updated publish topic to: %s, language: %s", publish_topic_.c_str(), language.c_str());
+    } else {
+        ESP_LOGI(TAG, "Custom publish_topic is set, skip updating: %s", publish_topic_.c_str());
+    }
 }
 
 bool MqttProtocol::SendText(const std::string& text) {

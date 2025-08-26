@@ -30,6 +30,9 @@ public:
     void CloseAudioChannel() override;
     bool IsAudioChannelOpened() const override;
 
+    // 对齐旧项目：运行时更新语言时，动态更新发布主题
+    void UpdateLanguage(const std::string& language);
+
 private:
     EventGroupHandle_t event_group_handle_;
 
@@ -39,6 +42,9 @@ private:
     std::string phone_control_topic_;
     std::string languagesType_topic_;
     std::string moan_topic_;
+
+    // 保存当前语言，便于日志与持久化
+    std::string languagesType_;
 
     // Device ID used in topic composition (MAC in decimal, legacy style)
     std::string user_id3_;
