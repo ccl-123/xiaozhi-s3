@@ -43,8 +43,33 @@ public:
 
     virtual void EnableOutput(bool enable) override {
         BoxAudioCodec::EnableOutput(enable);
-        // 简化版本：无PCA9557控制，直接使用基础音频编解码器功能
-        // 如果您的板子有独立的功放使能GPIO，可以在这里添加控制逻辑
+
+        // 功放控制逻辑（参考旧版本实现）
+#ifdef AMP_ENABLE_GPIO
+        if (AMP_ENABLE_GPIO != GPIO_NUM_NC) {
+            static bool s_gpio_init = false;
+            if (!s_gpio_init) {
+                gpio_config_t io_conf = {};
+                io_conf.intr_type = GPIO_INTR_DISABLE;
+                io_conf.mode = GPIO_MODE_OUTPUT;
+                io_conf.pin_bit_mask = (1ULL << AMP_ENABLE_GPIO);
+                io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+                io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+                ESP_ERROR_CHECK(gpio_config(&io_conf));
+                s_gpio_init = true;
+                ESP_LOGI("CustomAudioCodec", "Initialized AMP enable GPIO: %d", AMP_ENABLE_GPIO);
+            }
+#ifdef AMP_ENABLE_ACTIVE_HIGH
+            gpio_set_level(AMP_ENABLE_GPIO, enable ? 1 : 0);
+#else
+            gpio_set_level(AMP_ENABLE_GPIO, enable ? 0 : 1);
+#endif
+            ESP_LOGI("CustomAudioCodec", "AMP %s (GPIO %d = %d)",
+                     enable ? "enabled" : "disabled",
+                     AMP_ENABLE_GPIO,
+                     enable ? (AMP_ENABLE_ACTIVE_HIGH ? 1 : 0) : (AMP_ENABLE_ACTIVE_HIGH ? 0 : 1));
+        }
+#endif
     }
 };
 
