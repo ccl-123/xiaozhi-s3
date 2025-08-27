@@ -383,6 +383,7 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
     cJSON_AddNumberToObject(root, "angle_z", imu_data.AngleZ); // °单位
 
     cJSON_AddNumberToObject(root, "touch_value", touch_value);
+    //cJSON_AddNumberToObject(root, "fall_state", imu_data.fall_state);
     // 添加设备ID
     cJSON_AddStringToObject(root, "device_id", user_id3_.c_str());
 
