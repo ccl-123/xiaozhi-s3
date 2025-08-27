@@ -254,7 +254,7 @@ void QMI8658::InitializeFallDetection() {
     // 设置默认的摔倒检测参数
     fall_config_.acc_threshold = 2.5f;        // 2.5g 冲击阈值
     fall_config_.gyro_threshold = 150.0f;     // 150°/s 角速度阈值
-    fall_config_.posture_angle_threshold = 60.0f; // 60° 姿态变化阈值
+    fall_config_.posture_angle_threshold = 40.0f; // 40° 姿态变化阈值
     fall_config_.stable_acc_low = 0.8f;       // 0.8g 稳定下限
     fall_config_.stable_acc_high = 1.2f;      // 1.2g 稳定上限
     fall_config_.stable_gyro = 20.0f;         // 20°/s 稳定角速度阈值

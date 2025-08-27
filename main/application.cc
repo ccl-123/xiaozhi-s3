@@ -802,7 +802,7 @@ void Application::InitializeIMU() {
             ESP_LOGI(TAG, "IMU sensor initialized successfully");
             ESP_LOGI(TAG, "IMU sensor type: QMI8658, I2C address: 0x6A");
 
-            // 创建IMU定时器，每100ms读取一次数据
+            // 创建IMU定时器，每4ms读取一次数据（约250Hz）
             esp_timer_create_args_t imu_timer_args = {
                 .callback = [](void* arg) {
                     static_cast<Application*>(arg)->OnIMUTimer();
@@ -815,8 +815,8 @@ void Application::InitializeIMU() {
 
             esp_err_t ret = esp_timer_create(&imu_timer_args, &imu_timer_handle_);
             if (ret == ESP_OK) {
-                esp_timer_start_periodic(imu_timer_handle_, 20000); // 20ms (50Hz) - 适合摔倒检测
-                ESP_LOGI(TAG, "IMU timer started (20ms interval for fall detection)");
+                esp_timer_start_periodic(imu_timer_handle_, 4000); // 4ms (~250Hz)
+                ESP_LOGI(TAG, "IMU timer started (4ms interval ~ 250Hz)");
                 ESP_LOGI(TAG, "IMU data will be logged every 1 second");
             } else {
                 ESP_LOGE(TAG, "Failed to create IMU timer: %s", esp_err_to_name(ret));
@@ -838,9 +838,9 @@ void Application::OnIMUTimer() {
     t_sQMI8658 imu_data;
 
     if (imu_sensor_->ReadMotionData(&imu_data)) {
-        // 通过MQTT每25次读取（0.5秒）发送IMU数据 (20ms * 25 = 500ms)
+        // 通过MQTT每125次读取（0.5秒）发送IMU数据 (4ms * 125 = 500ms)
         static int mqtt_counter = 0;
-        if (++mqtt_counter >= 25) {
+        if (++mqtt_counter >= 125) {
             auto* mqtt_protocol = static_cast<MqttProtocol*>(protocol_.get());
             if (mqtt_protocol) {
                 mqtt_protocol->SendImuStatesAndValue(imu_data, 0);
@@ -850,7 +850,7 @@ void Application::OnIMUTimer() {
     } else {
         // 读取失败时的错误日志
         static int error_counter = 0;
-        if (++error_counter >= 250) { // 每5秒报告一次错误 (20ms * 250 = 5s)
+        if (++error_counter >= 1250) { // 每5秒报告一次错误 (4ms * 1250 = 5s)
             ESP_LOGE(TAG, "Failed to read IMU data");
             error_counter = 0;
         }
