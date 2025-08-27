@@ -241,6 +241,19 @@ void QMI8658::ConvertToPhysicalUnits(t_sQMI8658 *data) {
     data->gyr_y_dps = data->gyr_y * GYR_LSB_TO_DPS;
     data->gyr_z_dps = data->gyr_z * GYR_LSB_TO_DPS;
 
+    // 应用零偏补偿
+    if (calibrated_) {
+        data->gyr_x_dps -= gyr_offset_x_;
+        data->gyr_y_dps -= gyr_offset_y_;
+        data->gyr_z_dps -= gyr_offset_z_;
+    }
+
+    // 设置 1°/s 死区，抑制微小噪声
+    const float GYR_DEADBAND = 1.0f;
+    if (fabsf(data->gyr_x_dps) < GYR_DEADBAND) data->gyr_x_dps = 0.0f;
+    if (fabsf(data->gyr_y_dps) < GYR_DEADBAND) data->gyr_y_dps = 0.0f;
+    if (fabsf(data->gyr_z_dps) < GYR_DEADBAND) data->gyr_z_dps = 0.0f;
+
     // 四舍五入到4位小数
     data->acc_x_g = roundf(data->acc_x_g * 10000.0f) / 10000.0f;
     data->acc_y_g = roundf(data->acc_y_g * 10000.0f) / 10000.0f;
