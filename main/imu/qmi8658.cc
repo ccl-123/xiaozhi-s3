@@ -160,18 +160,23 @@ motion_level_t QMI8658::DetectMotion(t_sQMI8658 *p) {
     // 计算总变化量
     int32_t total_delta_fixed = delta_x_fixed + delta_y_fixed + delta_z_fixed;
     
-    // 阈值检查
+    // 阈值检查（将差分归一化到20ms基准，不改原阈值）
+    // 当前采样周期约为 4ms (250Hz)，后续如变更请调整 kDtActualMs
+    constexpr float kDtBaseMs   = 20.0f;
+    constexpr float kDtActualMs = 4.0f;
+    int32_t norm = static_cast<int32_t>((kDtBaseMs / kDtActualMs) * static_cast<float>(total_delta_fixed));
+
     motion_level_t motion_level;
-    if (total_delta_fixed < 3277) {
+    if (norm < 3277) {
         motion_level = MOTION_LEVEL_IDLE;      // 静止
-    } else if (total_delta_fixed < 13107) {
+    } else if (norm < 13107) {
         motion_level = MOTION_LEVEL_SLIGHT;    // 轻微运动
-    } else if (total_delta_fixed < 26214) {
+    } else if (norm < 26214) {
         motion_level = MOTION_LEVEL_MODERATE;  // 中等运动
     } else {
         motion_level = MOTION_LEVEL_INTENSE;   // 剧烈运动
     }
-    
+
     return motion_level;
 }
 
