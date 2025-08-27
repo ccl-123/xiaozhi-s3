@@ -332,7 +332,7 @@ fall_detection_state_t QMI8658::DetectFall(t_sQMI8658 *data) {
         }
 
         // 超时重置（防止长时间停留在检测状态）
-        if (current_time - stable_start_time_ > 5000) {  // 5秒超时
+        if (stable_start_time_ != 0 && current_time - stable_start_time_ > 5000) {  // 5秒超时
             possible_fall_ = false;
             fall_state_ = FALL_STATE_NORMAL;
             ESP_LOGW(TAG, "Fall detection timeout, reset to normal");
