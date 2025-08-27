@@ -418,7 +418,52 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
 
 
     // 发布消息
-    mqtt_->Publish(imu_topic, message);
+    //mqtt_->Publish(imu_topic, message);
+
+    // 清理资源
+    cJSON_free(message_str);
+    cJSON_Delete(root);
+}
+
+void MqttProtocol::SendAbortSpeaking(AbortReason reason) {
+    // 获取设备ID（MAC地址的十进制表示）
+    std::string device_id = SystemInfo::GetMacAddressDecimal();
+
+    // 根据中止原因决定action值
+    // kAbortReasonWakeWordDetected: 用户主动打断，使用"stop"
+    // kAbortReasonNone: 正常结束，使用"finish"
+    bool is_finish = (reason != kAbortReasonWakeWordDetected);
+    std::string action = is_finish ? "finish" : "stop";
+
+    // 构建JSON消息
+    cJSON* root = cJSON_CreateObject();
+    if (root == NULL) {
+        ESP_LOGE(TAG, "Failed to create JSON object for abort speaking");
+        return;
+    }
+
+    cJSON_AddStringToObject(root, "user_id", device_id.c_str());
+    cJSON_AddStringToObject(root, "action", action.c_str());
+
+    // 转换为字符串
+    char* message_str = cJSON_PrintUnformatted(root);
+    if (message_str == NULL) {
+        ESP_LOGE(TAG, "Failed to print JSON for abort speaking");
+        cJSON_Delete(root);
+        return;
+    }
+
+    std::string message(message_str);
+    std::string cancel_topic = "tts/cancel";
+
+    ESP_LOGI(TAG, "Sending CancelTTS message: %s", message.c_str());
+
+    // 发布到tts/cancel主题，QoS=2确保消息送达
+    if (mqtt_->Publish(cancel_topic, message, 2)) {
+        ESP_LOGI(TAG, "CancelTTS message sent to topic: %s", cancel_topic.c_str());
+    } else {
+        ESP_LOGE(TAG, "Failed to send CancelTTS message to topic: %s", cancel_topic.c_str());
+    }
 
     // 清理资源
     cJSON_free(message_str);

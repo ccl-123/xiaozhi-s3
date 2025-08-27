@@ -65,7 +65,7 @@ void AudioService::Initialize(AudioCodec* codec) {
     });
 
     audio_processor_->OnVadStateChange([this](bool speaking) {
-        voice_detected_ = speaking;
+        voice_detected_ = speaking;// 🎯 更新语音检测状态
         if (callbacks_.on_vad_change) {
             callbacks_.on_vad_change(speaking);
         }

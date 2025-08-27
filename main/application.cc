@@ -644,6 +644,12 @@ void Application::AbortSpeaking(AbortReason reason) {
 
 void Application::SetListeningMode(ListeningMode mode) {
     listening_mode_ = mode;
+
+    ESP_LOGW(TAG, "=== LISTENING MODE SET ===");
+    ESP_LOGW(TAG, "Mode: %s",
+        mode == kListeningModeRealtime ? "REALTIME" :
+        mode == kListeningModeAutoStop ? "AUTO_STOP" : "MANUAL_STOP");
+
     SetDeviceState(kDeviceStateListening);
 }
 
