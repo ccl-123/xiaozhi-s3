@@ -446,11 +446,7 @@ void MqttProtocol::SendAbortSpeaking(AbortReason reason) {
     // 获取设备ID（MAC地址的十进制表示）
     std::string device_id = SystemInfo::GetMacAddressDecimal();
 
-    // 根据中止原因决定action值
-    // kAbortReasonWakeWordDetected: 用户主动打断，使用"stop"
-    // kAbortReasonNone: 正常结束，使用"finish"
-    bool is_finish = (reason != kAbortReasonWakeWordDetected);
-    std::string action = is_finish ? "finish" : "stop";
+    std::string action = "stop";
 
     // 构建JSON消息
     cJSON* root = cJSON_CreateObject();
