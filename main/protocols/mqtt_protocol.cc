@@ -422,7 +422,7 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
 
 
     // 发布消息
-    mqtt_->Publish(imu_topic, message);
+    //mqtt_->Publish(imu_topic, message);
 
     // 清理资源
     cJSON_free(message_str);
