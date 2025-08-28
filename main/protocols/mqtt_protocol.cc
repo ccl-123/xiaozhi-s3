@@ -252,8 +252,6 @@ bool MqttProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
 
     size_t remaining = total;
     size_t offset = 0;
-    size_t total_chunks = (total + MAX_CHUNK_SIZE - 1) / MAX_CHUNK_SIZE;
-    ESP_LOGI(TAG, "Sending audio in chunks: total=%u, chunks=%u", (unsigned)total, (unsigned)total_chunks);
 
     while (remaining > 0) {
         size_t chunk_size = std::min(remaining, MAX_CHUNK_SIZE);
@@ -350,6 +348,12 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
         return;
     }
 
+    // 只有在运动等级大于0（非静止状态）时才上传IMU数据
+    if (imu_data.motion == 0) {
+        ESP_LOGD(TAG, "IMU in IDLE state (motion=0), skipping MQTT upload");
+        return;
+    }
+
     // 直接使用QMI8658类中已转换的物理单位数据
     float acc_x_g = imu_data.acc_x_g;
     float acc_y_g = imu_data.acc_y_g;
@@ -383,25 +387,25 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
     cJSON_AddNumberToObject(root, "angle_z", imu_data.AngleZ); // °单位
 
     cJSON_AddNumberToObject(root, "touch_value", touch_value);
-    //cJSON_AddNumberToObject(root, "fall_state", imu_data.fall_state);
+    //cJSON_AddNumberToObject(root, "fall_state", imu_data.fall_state);//跌倒检测
     // 添加设备ID
     cJSON_AddStringToObject(root, "device_id", user_id3_.c_str());
 
     // 打印IMU数据到日志（使用已转换的物理单位值）
     static int log_counter = 0;
     if (++log_counter >= 1) {  // 每1次发送（0.5秒）打印一次详细数据
-        ESP_LOGI(TAG, "===== IMU Data =====");
+        ESP_LOGI(TAG, "===== IMU Data (UPLOADING) =====");
         ESP_LOGI(TAG, "Accelerometer: X=%.4fg, Y=%.4fg, Z=%.4fg",
                  acc_x_g, acc_y_g, acc_z_g);
         ESP_LOGI(TAG, "Gyroscope: X=%.4f°/s, Y=%.4f°/s, Z=%.4f°/s",
                  gyr_x_dps, gyr_y_dps, gyr_z_dps);
         ESP_LOGI(TAG, "Angles: X=%.4f°, Y=%.4f°, Z=%.4f°",
                  imu_data.AngleX, imu_data.AngleY, imu_data.AngleZ);
-        ESP_LOGI(TAG, "Motion Level: %d (%s)", imu_data.motion,
+        ESP_LOGI(TAG, "Motion Level: %d (%s) - UPLOADING TO MQTT", imu_data.motion,
                  imu_data.motion == 0 ? "IDLE" :
                  imu_data.motion == 1 ? "SLIGHT" :
                  imu_data.motion == 2 ? "MODERATE" : "INTENSE");
-        ESP_LOGI(TAG, "===================");
+        ESP_LOGI(TAG, "====================================");
         log_counter = 0;
     }
 
@@ -418,7 +422,52 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
 
 
     // 发布消息
-    mqtt_->Publish(imu_topic, message);
+    //mqtt_->Publish(imu_topic, message);
+
+    // 清理资源
+    cJSON_free(message_str);
+    cJSON_Delete(root);
+}
+
+void MqttProtocol::SendAbortSpeaking(AbortReason reason) {
+    // 获取设备ID（MAC地址的十进制表示）
+    std::string device_id = SystemInfo::GetMacAddressDecimal();
+
+    // 根据中止原因决定action值
+    // kAbortReasonWakeWordDetected: 用户主动打断，使用"stop"
+    // kAbortReasonNone: 正常结束，使用"finish"
+    bool is_finish = (reason != kAbortReasonWakeWordDetected);
+    std::string action = is_finish ? "finish" : "stop";
+
+    // 构建JSON消息
+    cJSON* root = cJSON_CreateObject();
+    if (root == NULL) {
+        ESP_LOGE(TAG, "Failed to create JSON object for abort speaking");
+        return;
+    }
+
+    cJSON_AddStringToObject(root, "user_id", device_id.c_str());
+    cJSON_AddStringToObject(root, "action", action.c_str());
+
+    // 转换为字符串
+    char* message_str = cJSON_PrintUnformatted(root);
+    if (message_str == NULL) {
+        ESP_LOGE(TAG, "Failed to print JSON for abort speaking");
+        cJSON_Delete(root);
+        return;
+    }
+
+    std::string message(message_str);
+    std::string cancel_topic = "tts/cancel";
+
+    ESP_LOGI(TAG, "Sending CancelTTS message: %s", message.c_str());
+
+    // 发布到tts/cancel主题，QoS=2确保消息送达
+    if (mqtt_->Publish(cancel_topic, message, 2)) {
+        ESP_LOGI(TAG, "CancelTTS message sent to topic: %s", cancel_topic.c_str());
+    } else {
+        ESP_LOGE(TAG, "Failed to send CancelTTS message to topic: %s", cancel_topic.c_str());
+    }
 
     // 清理资源
     cJSON_free(message_str);

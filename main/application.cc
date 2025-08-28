@@ -615,7 +615,7 @@ void Application::OnWakeWordDetected() {
         }
 
         auto wake_word = audio_service_.GetLastWakeWord();
-        ESP_LOGI(TAG, "Wake word detected: %s", wake_word.c_str());
+        ESP_LOGI(TAG, "Wake word detected: ======================%s=========================", wake_word.c_str());
 #if CONFIG_USE_AFE_WAKE_WORD || CONFIG_USE_CUSTOM_WAKE_WORD
         // Encode and send the wake word data to the server
         while (auto packet = audio_service_.PopWakeWordPacket()) {
@@ -644,6 +644,12 @@ void Application::AbortSpeaking(AbortReason reason) {
 
 void Application::SetListeningMode(ListeningMode mode) {
     listening_mode_ = mode;
+
+    ESP_LOGW(TAG, "=== LISTENING MODE SET ===");
+    ESP_LOGW(TAG, "Mode: %s",
+        mode == kListeningModeRealtime ? "REALTIME" :
+        mode == kListeningModeAutoStop ? "AUTO_STOP" : "MANUAL_STOP");
+
     SetDeviceState(kDeviceStateListening);
 }
 
@@ -843,7 +849,19 @@ void Application::OnIMUTimer() {
         if (++mqtt_counter >= 125) {
             auto* mqtt_protocol = static_cast<MqttProtocol*>(protocol_.get());
             if (mqtt_protocol) {
-                mqtt_protocol->SendImuStatesAndValue(imu_data, 0);
+                // 使用IMU检测到的运动等级作为touch_value参数
+                // motion: 0=IDLE, 1=SLIGHT, 2=MODERATE, 3=INTENSE
+                // 只有运动等级>0时才会实际上传
+                static int idle_skip_counter = 0;
+                if (imu_data.motion == 0) {
+                    if (++idle_skip_counter >= 10) { // 每5秒打印一次跳过信息 (0.5s * 10 = 5s)
+                        ESP_LOGD(TAG, "IMU in IDLE state, skipping MQTT upload (motion=0)");
+                        idle_skip_counter = 0;
+                    }
+                } else {
+                    idle_skip_counter = 0; // 重置计数器
+                }
+                mqtt_protocol->SendImuStatesAndValue(imu_data, imu_data.motion);
             }
             mqtt_counter = 0;
         }
