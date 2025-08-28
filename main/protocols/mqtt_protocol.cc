@@ -348,6 +348,19 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
         return;
     }
 
+    // 检查是否已经检测过唤醒词（设备状态不是 Idle）
+    auto& app = Application::GetInstance();
+    DeviceState current_state = app.GetDeviceState();
+    if (current_state == kDeviceStateIdle || current_state == kDeviceStateStarting ||
+        current_state == kDeviceStateWifiConfiguring || current_state == kDeviceStateConnecting) {
+        static int skip_log_counter = 0;
+        if (++skip_log_counter >= 50) { // 每25秒打印一次跳过信息 (0.5s * 50 = 25s)
+            ESP_LOGI(TAG, "🚫 Wake word not detected yet (state=%d), skipping IMU upload", current_state);
+            skip_log_counter = 0;
+        }
+        return;
+    }
+
     // 只有在运动等级大于0（非静止状态）时才上传IMU数据
     if (imu_data.motion == 0) {
         ESP_LOGD(TAG, "IMU in IDLE state (motion=0), skipping MQTT upload");
