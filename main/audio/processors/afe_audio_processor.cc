@@ -137,10 +137,10 @@ void AfeAudioProcessor::AudioProcessorTask() {
         // VAD state change
         if (vad_state_change_callback_) {
             if (res->vad_state == VAD_SPEECH && !is_speaking_) {
-                is_speaking_ = true;
+                is_speaking_ = true;// 🎯 检测到用户说话
                 vad_state_change_callback_(true);
             } else if (res->vad_state == VAD_SILENCE && is_speaking_) {
-                is_speaking_ = false;
+                is_speaking_ = false;//🎯 用户停止说话
                 vad_state_change_callback_(false);
             }
         }

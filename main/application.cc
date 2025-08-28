@@ -615,7 +615,7 @@ void Application::OnWakeWordDetected() {
         }
 
         auto wake_word = audio_service_.GetLastWakeWord();
-        ESP_LOGI(TAG, "Wake word detected: %s", wake_word.c_str());
+        ESP_LOGI(TAG, "Wake word detected: ======================%s=========================", wake_word.c_str());
 #if CONFIG_USE_AFE_WAKE_WORD || CONFIG_USE_CUSTOM_WAKE_WORD
         // Encode and send the wake word data to the server
         while (auto packet = audio_service_.PopWakeWordPacket()) {
@@ -644,6 +644,12 @@ void Application::AbortSpeaking(AbortReason reason) {
 
 void Application::SetListeningMode(ListeningMode mode) {
     listening_mode_ = mode;
+
+    ESP_LOGW(TAG, "=== LISTENING MODE SET ===");
+    ESP_LOGW(TAG, "Mode: %s",
+        mode == kListeningModeRealtime ? "REALTIME" :
+        mode == kListeningModeAutoStop ? "AUTO_STOP" : "MANUAL_STOP");
+
     SetDeviceState(kDeviceStateListening);
 }
 
@@ -802,7 +808,7 @@ void Application::InitializeIMU() {
             ESP_LOGI(TAG, "IMU sensor initialized successfully");
             ESP_LOGI(TAG, "IMU sensor type: QMI8658, I2C address: 0x6A");
 
-            // 创建IMU定时器，每100ms读取一次数据
+            // 创建IMU定时器，每4ms读取一次数据（约250Hz）
             esp_timer_create_args_t imu_timer_args = {
                 .callback = [](void* arg) {
                     static_cast<Application*>(arg)->OnIMUTimer();
@@ -815,8 +821,8 @@ void Application::InitializeIMU() {
 
             esp_err_t ret = esp_timer_create(&imu_timer_args, &imu_timer_handle_);
             if (ret == ESP_OK) {
-                esp_timer_start_periodic(imu_timer_handle_, 100000); // 100ms
-                ESP_LOGI(TAG, "IMU timer started (100ms interval)");
+                esp_timer_start_periodic(imu_timer_handle_, 4000); // 4ms (~250Hz)
+                ESP_LOGI(TAG, "IMU timer started (4ms interval ~ 250Hz)");
                 ESP_LOGI(TAG, "IMU data will be logged every 1 second");
             } else {
                 ESP_LOGE(TAG, "Failed to create IMU timer: %s", esp_err_to_name(ret));
@@ -838,19 +844,31 @@ void Application::OnIMUTimer() {
     t_sQMI8658 imu_data;
 
     if (imu_sensor_->ReadMotionData(&imu_data)) {
-        // 通过MQTT每5次读取（0.5秒）发送IMU数据
+        // 通过MQTT每125次读取（0.5秒）发送IMU数据 (4ms * 125 = 500ms)
         static int mqtt_counter = 0;
-        if (++mqtt_counter >= 5) {
+        if (++mqtt_counter >= 125) {
             auto* mqtt_protocol = static_cast<MqttProtocol*>(protocol_.get());
             if (mqtt_protocol) {
-                mqtt_protocol->SendImuStatesAndValue(imu_data, 0);
+                // 使用IMU检测到的运动等级作为touch_value参数
+                // motion: 0=IDLE, 1=SLIGHT, 2=MODERATE, 3=INTENSE
+                // 只有运动等级>0时才会实际上传
+                static int idle_skip_counter = 0;
+                if (imu_data.motion == 0) {
+                    if (++idle_skip_counter >= 10) { // 每5秒打印一次跳过信息 (0.5s * 10 = 5s)
+                        ESP_LOGD(TAG, "IMU in IDLE state, skipping MQTT upload (motion=0)");
+                        idle_skip_counter = 0;
+                    }
+                } else {
+                    idle_skip_counter = 0; // 重置计数器
+                }
+                mqtt_protocol->SendImuStatesAndValue(imu_data, imu_data.motion);
             }
             mqtt_counter = 0;
         }
     } else {
         // 读取失败时的错误日志
         static int error_counter = 0;
-        if (++error_counter >= 50) { // 每5秒报告一次错误
+        if (++error_counter >= 1250) { // 每5秒报告一次错误 (4ms * 1250 = 5s)
             ESP_LOGE(TAG, "Failed to read IMU data");
             error_counter = 0;
         }
