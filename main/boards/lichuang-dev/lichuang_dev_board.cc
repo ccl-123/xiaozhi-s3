@@ -6,6 +6,7 @@
 #include "config.h"
 #include "i2c_device.h"  // IMU需要I2C设备
 #include "qmi8658.h"     // IMU传感器
+#include "led/single_led.h"  // RGB LED支持
 
 
 #include <esp_log.h>
@@ -209,6 +210,11 @@ public:
 
     virtual QMI8658* GetIMUSensor() override {
         return imu_sensor_;
+    }
+
+    virtual Led* GetLed() override {
+        static SingleLed led(RGB_LED_GPIO);  // 使用GPIO 11的RGB LED
+        return &led;
     }
 
 };
