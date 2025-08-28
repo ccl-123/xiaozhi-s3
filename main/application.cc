@@ -584,6 +584,18 @@ void Application::MainEventLoop() {
             if (device_state_ == kDeviceStateListening) {
                 auto led = Board::GetInstance().GetLed();
                 led->OnStateChanged();
+            } else if (device_state_ == kDeviceStateSpeaking && listening_mode_ == kListeningModeRealtime) {
+                // AEC Realtime模式下的Speaking状态：根据VAD动态控制音频上传
+                bool voice_detected = audio_service_.IsVoiceDetected();
+                if (voice_detected) {
+                    // 检测到用户说话：开启音频上传并发送打断指令
+                    ESP_LOGI(TAG, "User speech detected during TTS playback, enabling audio upload");
+                    audio_service_.EnableAudioUpload(true);
+                    AbortSpeaking(kAbortReasonNone);
+                } else {
+
+                    audio_service_.EnableAudioUpload(false);
+                }
             }
         }
 
@@ -694,9 +706,13 @@ void Application::SetDeviceState(DeviceState state) {
                 audio_service_.EnableVoiceProcessing(true);
                 audio_service_.EnableWakeWordDetection(false);
             }
+            // 确保监听状态下音频上传是开启的
+            audio_service_.EnableAudioUpload(true);
             break;
         case kDeviceStateSpeaking:
             display->SetStatus(Lang::Strings::SPEAKING);
+            ESP_LOGI(TAG, "Entering Speaking state: listening_mode=%s",
+                listening_mode_ == kListeningModeRealtime ? "REALTIME" : "NON-REALTIME");
 
             if (listening_mode_ != kListeningModeRealtime) {
                 audio_service_.EnableVoiceProcessing(false);
@@ -706,6 +722,13 @@ void Application::SetDeviceState(DeviceState state) {
 #else
                 audio_service_.EnableWakeWordDetection(false);
 #endif
+            } else {
+                // AEC Realtime模式：确保音频处理器继续运行以进行VAD检测
+                if (!audio_service_.IsAudioProcessorRunning()) {
+                    audio_service_.EnableVoiceProcessing(true);
+                }
+                // 初始时关闭音频上传，等待VAD检测
+                audio_service_.EnableAudioUpload(false);
             }
             audio_service_.ResetDecoder();
             break;

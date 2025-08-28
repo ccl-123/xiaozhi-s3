@@ -33,8 +33,13 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms) {
     
     afe_config_t* afe_config = afe_config_init(input_format.c_str(), NULL, AFE_TYPE_VC, AFE_MODE_HIGH_PERF);
     afe_config->aec_mode = AEC_MODE_VOIP_HIGH_PERF;
-    afe_config->vad_mode = VAD_MODE_0;
-    afe_config->vad_min_noise_ms = 100;
+    afe_config->vad_mode = VAD_MODE_1;  // 官方推荐模式，数值越大触发概率越高
+    afe_config->vad_min_noise_ms = 800;  // 800ms静音时长，降低误触发（官方推荐1000ms）
+    
+    // 添加更多VAD调优参数以降低灵敏度（使用ESP-SR实际支持的参数）
+    afe_config->vad_min_speech_ms = 128;  // 语音段的最短持续时间（毫秒）
+    afe_config->vad_delay_ms = 128;       // VAD首帧触发到语音首帧数据的延迟量
+    
     if (vad_model_name != nullptr) {
         afe_config->vad_model_name = vad_model_name;
     }
@@ -54,7 +59,7 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms) {
 
 #ifdef CONFIG_USE_DEVICE_AEC
     afe_config->aec_init = true;
-    afe_config->vad_init = false;
+    afe_config->vad_init = true;  // 强制启用VAD以支持Speaking状态下的打断检测
 #else
     afe_config->aec_init = false;
     afe_config->vad_init = true;
@@ -134,10 +139,36 @@ void AfeAudioProcessor::AudioProcessorTask() {
             continue;
         }
 
-        // VAD state change
+        // VAD state change - 优化：只在状态变化时处理缓存
         if (vad_state_change_callback_) {
+            // 添加调试日志显示VAD原始状态
+            static int vad_log_counter = 0;
+            if (++vad_log_counter % 50 == 0) {  // 每50次打印一次，避免日志过多
+                ESP_LOGD(TAG, "VAD raw state: %d, is_speaking_: %s, cache_size: %d",
+                    res->vad_state, is_speaking_ ? "true" : "false", res->vad_cache_size);
+            }
+
             if (res->vad_state == VAD_SPEECH && !is_speaking_) {
-                is_speaking_ = true;// 🎯 检测到用户说话
+                is_speaking_ = true;//检测到用户说话
+                // 1. VAD算法固有延迟：VAD无法在首帧精准触发，可能有1-3帧延迟
+                // 2. 防误触机制：需持续触发时间达到vad_min_speech_ms才会正式触发
+                if (res->vad_cache_size > 0 && output_callback_) {
+                    if (res->vad_cache != nullptr && res->vad_cache_size % sizeof(int16_t) == 0) {
+                        ESP_LOGI(TAG, "VAD triggered with cache: %d bytes, processing cached audio", res->vad_cache_size);
+                        // 将VAD缓存数据转换为int16_t并加入输出缓冲区开头
+                        size_t cache_samples = res->vad_cache_size / sizeof(int16_t);
+                        int16_t* cache_data = (int16_t*)res->vad_cache;
+
+                        // 优先处理缓存数据，避免首字截断
+                        output_buffer_.insert(output_buffer_.begin(), cache_data, cache_data + cache_samples);
+
+                        ESP_LOGD(TAG, "VAD cache processed: %zu samples (%.1fms audio) added to buffer",
+                                 cache_samples, (float)cache_samples / 16.0f);  // 16kHz采样率
+                    } else {
+                        ESP_LOGW(TAG, "Invalid VAD cache data: ptr=%p, size=%d", res->vad_cache, res->vad_cache_size);
+                    }
+                }
+
                 vad_state_change_callback_(true);
             } else if (res->vad_state == VAD_SILENCE && is_speaking_) {
                 is_speaking_ = false;//🎯 用户停止说话
