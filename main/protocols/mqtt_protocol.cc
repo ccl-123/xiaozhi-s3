@@ -252,8 +252,6 @@ bool MqttProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
 
     size_t remaining = total;
     size_t offset = 0;
-    size_t total_chunks = (total + MAX_CHUNK_SIZE - 1) / MAX_CHUNK_SIZE;
-    ESP_LOGI(TAG, "Sending audio in chunks: total=%u, chunks=%u", (unsigned)total, (unsigned)total_chunks);
 
     while (remaining > 0) {
         size_t chunk_size = std::min(remaining, MAX_CHUNK_SIZE);
@@ -350,6 +348,12 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
         return;
     }
 
+    // 只有在运动等级大于0（非静止状态）时才上传IMU数据
+    if (imu_data.motion == 0) {
+        ESP_LOGD(TAG, "IMU in IDLE state (motion=0), skipping MQTT upload");
+        return;
+    }
+
     // 直接使用QMI8658类中已转换的物理单位数据
     float acc_x_g = imu_data.acc_x_g;
     float acc_y_g = imu_data.acc_y_g;
@@ -383,25 +387,25 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
     cJSON_AddNumberToObject(root, "angle_z", imu_data.AngleZ); // °单位
 
     cJSON_AddNumberToObject(root, "touch_value", touch_value);
-    //cJSON_AddNumberToObject(root, "fall_state", imu_data.fall_state);
+    //cJSON_AddNumberToObject(root, "fall_state", imu_data.fall_state);//跌倒检测
     // 添加设备ID
     cJSON_AddStringToObject(root, "device_id", user_id3_.c_str());
 
     // 打印IMU数据到日志（使用已转换的物理单位值）
     static int log_counter = 0;
     if (++log_counter >= 1) {  // 每1次发送（0.5秒）打印一次详细数据
-        ESP_LOGI(TAG, "===== IMU Data =====");
+        ESP_LOGI(TAG, "===== IMU Data (UPLOADING) =====");
         ESP_LOGI(TAG, "Accelerometer: X=%.4fg, Y=%.4fg, Z=%.4fg",
                  acc_x_g, acc_y_g, acc_z_g);
         ESP_LOGI(TAG, "Gyroscope: X=%.4f°/s, Y=%.4f°/s, Z=%.4f°/s",
                  gyr_x_dps, gyr_y_dps, gyr_z_dps);
         ESP_LOGI(TAG, "Angles: X=%.4f°, Y=%.4f°, Z=%.4f°",
                  imu_data.AngleX, imu_data.AngleY, imu_data.AngleZ);
-        ESP_LOGI(TAG, "Motion Level: %d (%s)", imu_data.motion,
+        ESP_LOGI(TAG, "Motion Level: %d (%s) - UPLOADING TO MQTT", imu_data.motion,
                  imu_data.motion == 0 ? "IDLE" :
                  imu_data.motion == 1 ? "SLIGHT" :
                  imu_data.motion == 2 ? "MODERATE" : "INTENSE");
-        ESP_LOGI(TAG, "===================");
+        ESP_LOGI(TAG, "====================================");
         log_counter = 0;
     }
 
@@ -418,7 +422,7 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
 
 
     // 发布消息
-    //mqtt_->Publish(imu_topic, message);
+    mqtt_->Publish(imu_topic, message);
 
     // 清理资源
     cJSON_free(message_str);
