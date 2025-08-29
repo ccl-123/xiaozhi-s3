@@ -227,7 +227,7 @@ void AfeAudioProcessor::AudioProcessorTask() {
                 // 重置能量检测状态
                 energy_above_threshold_frames_ = 0;
                 energy_below_threshold_frames_ = 0;
-                ESP_LOGI(TAG, "VAD silence detected, final energy: %.1fdBFS", current_energy_dbfs_);
+                //ESP_LOGI(TAG, "VAD silence detected, final energy: %.1fdBFS", current_energy_dbfs_);
                 vad_state_change_callback_(false);
             }
         }
@@ -316,8 +316,8 @@ bool AfeAudioProcessor::CheckEnergyThreshold(float energy_dbfs) {
         energy_below_threshold_frames_++;
         energy_above_threshold_frames_ = 0;
 
-        // 连续几帧低于阈值就认为不是语音 
-        return energy_below_threshold_frames_ < vad_min_energy_frames_;
+        // 低于阈值时不触发语音（严格门控）
+        return false;
     }
 }
 
