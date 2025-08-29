@@ -41,12 +41,12 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms) {
     
     afe_config_t* afe_config = afe_config_init(input_format.c_str(), NULL, AFE_TYPE_VC, AFE_MODE_HIGH_PERF);
     afe_config->aec_mode = AEC_MODE_VOIP_HIGH_PERF;
-    afe_config->vad_mode = VAD_MODE_0;  // 数值越大触发概率越高
+    afe_config->vad_mode = VAD_MODE_1;  // 数值越大触发概率越高
     afe_config->vad_min_noise_ms = 800;  // 800ms静音时长，降低误触发（官方推荐1000ms）
     
     // 添加更多VAD调优参数以降低灵敏度（使用ESP-SR实际支持的参数）
-    afe_config->vad_min_speech_ms = 192;  // 语音段的最短持续时间（毫秒）
-    afe_config->vad_delay_ms = 192;       // VAD首帧触发到语音首帧数据的延迟量
+    afe_config->vad_min_speech_ms = 128;  // 语音段的最短持续时间（毫秒）
+    afe_config->vad_delay_ms = 128;       // VAD首帧触发到语音首帧数据的延迟量
     
     if (vad_model_name != nullptr) {
         afe_config->vad_model_name = vad_model_name;
@@ -227,7 +227,7 @@ void AfeAudioProcessor::AudioProcessorTask() {
                 // 重置能量检测状态
                 energy_above_threshold_frames_ = 0;
                 energy_below_threshold_frames_ = 0;
-                //ESP_LOGI(TAG, "VAD silence detected, final energy: %.1fdBFS", current_energy_dbfs_);
+                ESP_LOGI(TAG, "VAD silence detected, final energy: %.1fdBFS", current_energy_dbfs_);
                 vad_state_change_callback_(false);
             }
         }
