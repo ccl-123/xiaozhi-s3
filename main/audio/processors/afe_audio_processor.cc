@@ -46,7 +46,7 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms) {
     
     // 添加更多VAD调优参数以降低灵敏度（使用ESP-SR实际支持的参数）
     afe_config->vad_min_speech_ms = 192;  // 语音段的最短持续时间（毫秒）
-    afe_config->vad_delay_ms = 224;       // VAD首帧触发到语音首帧数据的延迟量
+    afe_config->vad_delay_ms = 192;       // VAD首帧触发到语音首帧数据的延迟量
     
     if (vad_model_name != nullptr) {
         afe_config->vad_model_name = vad_model_name;
@@ -150,11 +150,11 @@ void AfeAudioProcessor::AudioProcessorTask() {
         // VAD state change - 优化：只在状态变化时处理缓存
         if (vad_state_change_callback_) {
             // 添加调试日志显示VAD原始状态
-            static int vad_log_counter = 0;
-            if (++vad_log_counter % 10 == 0) {  // 每50次打印一次，避免日志过多
-                ESP_LOGI(TAG, "VAD raw state: %d, is_speaking_: %s, cache_size: %d",
-                    res->vad_state, is_speaking_ ? "true" : "false", res->vad_cache_size);
-            }
+            // static int vad_log_counter = 0;
+            // if (++vad_log_counter % 10 == 0) {  // 每50次打印一次，避免日志过多
+            //     // ESP_LOGI(TAG, "VAD raw state: %d, is_speaking_: %s, cache_size: %d",
+            //     //     res->vad_state, is_speaking_ ? "true" : "false", res->vad_cache_size);
+            // }
     
             if (res->vad_state == VAD_SPEECH && !is_speaking_) {
                 // 🎯 新增：音频能量阈值过滤
@@ -169,6 +169,7 @@ void AfeAudioProcessor::AudioProcessorTask() {
                 // 只有VAD检测到语音且能量足够时才触发
                 if (energy_sufficient) {
                     is_speaking_ = true;//检测到用户说话
+                    vad_cache_just_processed_ = false;  // 🎯 重置缓存处理标记
                     ESP_LOGI(TAG, "VAD triggered: energy=%.1fdBFS (smoothed=%.1fdBFS), threshold=%.1fdBFS",
                              current_energy_dbfs_, smoothed_energy_dbfs_, vad_energy_threshold_dbfs_);
                 // 1. VAD算法固有延迟：VAD无法在首帧精准触发，可能有1-3帧延迟
@@ -188,8 +189,8 @@ void AfeAudioProcessor::AudioProcessorTask() {
                         size_t cache_samples = res->vad_cache_size / sizeof(int16_t);
                         int16_t* cache_data = (int16_t*)res->vad_cache;
 
-                        ESP_LOGI(TAG, "Processing VAD cache: %d bytes, %d samples",
-                                res->vad_cache_size, (int)cache_samples);
+                        // ESP_LOGI(TAG, "Processing VAD cache: %d bytes, %d samples",
+                        //         res->vad_cache_size, (int)cache_samples);
 
                         try {
                             //检测到新语音时，清空旧缓冲区保证时间顺序
@@ -201,8 +202,9 @@ void AfeAudioProcessor::AudioProcessorTask() {
                             // 正确顺序：先添加VAD缓存数据（历史数据）
                             output_buffer_.insert(output_buffer_.end(), cache_data, cache_data + cache_samples);
 
-                            ESP_LOGI(TAG, "VAD cache processed successfully, buffer size: %d",
-                                    (int)output_buffer_.size());
+                            // ESP_LOGI(TAG, "VAD cache processed successfully, buffer size: %d",
+                            //         (int)output_buffer_.size());
+                            vad_cache_just_processed_ = true;  // 🎯 标记已处理VAD缓存
                         } catch (const std::exception& e) {
                             ESP_LOGE(TAG, "Exception processing VAD cache: %s", e.what());
                         } catch (...) {
@@ -232,9 +234,16 @@ void AfeAudioProcessor::AudioProcessorTask() {
 
         if (output_callback_) {
             size_t samples = res->data_size / sizeof(int16_t);
-            
-            // Add data to buffer
-            output_buffer_.insert(output_buffer_.end(), res->data, res->data + samples);
+
+            // 🎯 优化：避免VAD缓存和当前帧重复
+            if (vad_cache_just_processed_) {
+                // 刚处理了VAD缓存，跳过当前帧避免重复
+                ESP_LOGD(TAG, "Skipping current frame (samples=%d) to avoid duplication with VAD cache", (int)samples);
+                vad_cache_just_processed_ = false;  // 重置标记
+            } else {
+                // 正常添加当前帧数据
+                output_buffer_.insert(output_buffer_.end(), res->data, res->data + samples);
+            }
             
             // Output complete frames when buffer has enough data
             while (output_buffer_.size() >= frame_samples_) {
