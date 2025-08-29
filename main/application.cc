@@ -884,7 +884,7 @@ void Application::OnIMUTimer() {
                 } else {
                     idle_skip_counter = 0; // 重置计数器
                 }
-                mqtt_protocol->SendImuStatesAndValue(imu_data, imu_data.motion);
+                //mqtt_protocol->SendImuStatesAndValue(imu_data, imu_data.motion);
             }
             mqtt_counter = 0;
         }

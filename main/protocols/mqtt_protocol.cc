@@ -220,8 +220,16 @@ void MqttProtocol::UpdateLanguage(const std::string& language) {
 
 bool MqttProtocol::SendText(const std::string& text) {
     if (publish_topic_.empty()) {
+        ESP_LOGW(TAG, "Publish topic is empty");
         return false;
     }
+
+    // 检查MQTT连接状态
+    if (mqtt_ == nullptr || !mqtt_->IsConnected()) {
+        ESP_LOGW(TAG, "MQTT not connected, cannot send text message");
+        return false;
+    }
+
     if (!mqtt_->Publish(publish_topic_, text)) {
         ESP_LOGE(TAG, "Failed to publish message: %s", text.c_str());
         SetError(Lang::Strings::SERVER_ERROR);
@@ -443,6 +451,12 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
 }
 
 void MqttProtocol::SendAbortSpeaking(AbortReason reason) {
+    // 检查MQTT连接状态
+    if (mqtt_ == nullptr || !mqtt_->IsConnected()) {
+        ESP_LOGW(TAG, "MQTT not connected, cannot send CancelTTS message");
+        return;
+    }
+
     // 获取设备ID（MAC地址的十进制表示）
     std::string device_id = SystemInfo::GetMacAddressDecimal();
 
@@ -469,18 +483,24 @@ void MqttProtocol::SendAbortSpeaking(AbortReason reason) {
     std::string message(message_str);
     std::string cancel_topic = "tts/cancel";
 
-    ESP_LOGI(TAG, "Sending CancelTTS message: %s", message.c_str());
 
-    // 发布到tts/cancel主题，QoS=1确保消息送达（降低QoS以提高成功率）
+
+    // 发布到tts/cancel主题，使用QoS=0提高成功率
     bool sent = false;
     for (int retry = 0; retry < 3 && !sent; retry++) {
-        if (mqtt_->Publish(cancel_topic, message, 1)) {
+        // 每次重试前再次检查连接状态
+        if (!mqtt_->IsConnected()) {
+            ESP_LOGW(TAG, "MQTT disconnected during retry %d/3", retry + 1);
+            break;
+        }
+        ESP_LOGI(TAG, "Sending CancelTTS message: %s", message.c_str());
+        if (mqtt_->Publish(cancel_topic, message, 2)) {  
             ESP_LOGI(TAG, "CancelTTS message sent to topic: %s", cancel_topic.c_str());
             sent = true;
         } else {
             ESP_LOGW(TAG, "Failed to send CancelTTS message (attempt %d/3)", retry + 1);
             if (retry < 2) {
-                vTaskDelay(pdMS_TO_TICKS(50)); // 等待50ms后重试
+                vTaskDelay(pdMS_TO_TICKS(50)); 
             }
         }
     }

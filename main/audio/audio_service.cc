@@ -107,14 +107,14 @@ void AudioService::Start() {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioInputTask();
         vTaskDelete(NULL);
-    }, "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 1);
+    }, "audio_input", 2048 * 4, this, 8, &audio_input_task_handle_, 1);  // 增加到8KB
 
     /* Start the audio output task */
     xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioOutputTask();
         vTaskDelete(NULL);
-    }, "audio_output", 2048 * 2, this, 3, &audio_output_task_handle_);
+    }, "audio_output", 2048 * 3, this, 3, &audio_output_task_handle_);  // 增加栈大小到8KB
 #else
     /* Start the audio input task */
     xTaskCreate([](void* arg) {

@@ -8,6 +8,13 @@
 AfeAudioProcessor::AfeAudioProcessor()
     : afe_data_(nullptr) {
     event_group_ = xEventGroupCreate();
+
+    // 预分配输出缓冲区，避免频繁重新分配
+    output_buffer_.reserve(8192);  // 预分配8KB空间
+
+    // 打印内存信息
+    ESP_LOGI(TAG, "AFE constructor - Free heap: %" PRIu32 " bytes", esp_get_free_heap_size());
+    ESP_LOGI(TAG, "AFE constructor - Free internal heap: %" PRIu32 " bytes", esp_get_free_internal_heap_size());
 }
 
 void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms) {
@@ -33,12 +40,12 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms) {
     
     afe_config_t* afe_config = afe_config_init(input_format.c_str(), NULL, AFE_TYPE_VC, AFE_MODE_HIGH_PERF);
     afe_config->aec_mode = AEC_MODE_VOIP_HIGH_PERF;
-    afe_config->vad_mode = VAD_MODE_1;  // 官方推荐模式，数值越大触发概率越高
+    afe_config->vad_mode = VAD_MODE_0;  // 数值越大触发概率越高
     afe_config->vad_min_noise_ms = 800;  // 800ms静音时长，降低误触发（官方推荐1000ms）
     
     // 添加更多VAD调优参数以降低灵敏度（使用ESP-SR实际支持的参数）
-    afe_config->vad_min_speech_ms = 128;  // 语音段的最短持续时间（毫秒）
-    afe_config->vad_delay_ms = 128;       // VAD首帧触发到语音首帧数据的延迟量
+    afe_config->vad_min_speech_ms = 192;  // 语音段的最短持续时间（毫秒）
+    afe_config->vad_delay_ms = 224;       // VAD首帧触发到语音首帧数据的延迟量
     
     if (vad_model_name != nullptr) {
         afe_config->vad_model_name = vad_model_name;
@@ -143,29 +150,48 @@ void AfeAudioProcessor::AudioProcessorTask() {
         if (vad_state_change_callback_) {
             // 添加调试日志显示VAD原始状态
             static int vad_log_counter = 0;
-            if (++vad_log_counter % 50 == 0) {  // 每50次打印一次，避免日志过多
-                ESP_LOGD(TAG, "VAD raw state: %d, is_speaking_: %s, cache_size: %d",
+            if (++vad_log_counter % 10 == 0) {  // 每50次打印一次，避免日志过多
+                ESP_LOGI(TAG, "VAD raw state: %d, is_speaking_: %s, cache_size: %d",
                     res->vad_state, is_speaking_ ? "true" : "false", res->vad_cache_size);
             }
-
+    
             if (res->vad_state == VAD_SPEECH && !is_speaking_) {
                 is_speaking_ = true;//检测到用户说话
                 // 1. VAD算法固有延迟：VAD无法在首帧精准触发，可能有1-3帧延迟
                 // 2. 防误触机制：需持续触发时间达到vad_min_speech_ms才会正式触发
                 if (res->vad_cache_size > 0 && output_callback_) {
-                    if (res->vad_cache != nullptr && res->vad_cache_size % sizeof(int16_t) == 0) {
-                        ESP_LOGI(TAG, "VAD triggered with cache: %d bytes, processing cached audio", res->vad_cache_size);
-                        // 将VAD缓存数据转换为int16_t并加入输出缓冲区开头
+                    // 🛡️ 增强安全检查
+                    const size_t MAX_CACHE_SIZE = 16384;  // 8KB最大缓存限制
+
+                    if (res->vad_cache == nullptr) {
+                        ESP_LOGE(TAG, "VAD cache pointer is null");
+                    } else if (res->vad_cache_size % sizeof(int16_t) != 0) {
+                        ESP_LOGE(TAG, "VAD cache size not aligned: %d", res->vad_cache_size);
+                    } else if (res->vad_cache_size > MAX_CACHE_SIZE) {
+                        ESP_LOGE(TAG, "VAD cache size too large: %d > %d", res->vad_cache_size, MAX_CACHE_SIZE);
+                    } else {
+                        // 安全处理VAD缓存
                         size_t cache_samples = res->vad_cache_size / sizeof(int16_t);
                         int16_t* cache_data = (int16_t*)res->vad_cache;
 
-                        // 优先处理缓存数据，避免首字截断
-                        output_buffer_.insert(output_buffer_.begin(), cache_data, cache_data + cache_samples);
+                        ESP_LOGI(TAG, "Processing VAD cache: %d bytes, %d samples",
+                                res->vad_cache_size, (int)cache_samples);
 
-                        ESP_LOGD(TAG, "VAD cache processed: %zu samples (%.1fms audio) added to buffer",
-                                 cache_samples, (float)cache_samples / 16.0f);  // 16kHz采样率
-                    } else {
-                        ESP_LOGW(TAG, "Invalid VAD cache data: ptr=%p, size=%d", res->vad_cache, res->vad_cache_size);
+                        try {
+                            // 预先保留空间，避免多次重新分配
+                            size_t new_size = output_buffer_.size() + cache_samples;
+                            output_buffer_.reserve(new_size);
+
+                            // 优先处理缓存数据，避免首字截断
+                            output_buffer_.insert(output_buffer_.begin(), cache_data, cache_data + cache_samples);
+
+                            ESP_LOGI(TAG, "VAD cache processed successfully, buffer size: %d",
+                                    (int)output_buffer_.size());
+                        } catch (const std::exception& e) {
+                            ESP_LOGE(TAG, "Exception processing VAD cache: %s", e.what());
+                        } catch (...) {
+                            ESP_LOGE(TAG, "Unknown exception processing VAD cache");
+                        }
                     }
                 }
 
