@@ -1,5 +1,6 @@
 #include "afe_audio_processor.h"
 #include <esp_log.h>
+#include <cmath>
 
 #define PROCESSOR_RUNNING 0x01
 
@@ -156,7 +157,20 @@ void AfeAudioProcessor::AudioProcessorTask() {
             }
     
             if (res->vad_state == VAD_SPEECH && !is_speaking_) {
-                is_speaking_ = true;//检测到用户说话
+                // 🎯 新增：音频能量阈值过滤
+                // 计算当前音频帧的能量
+                size_t current_samples = res->data_size / sizeof(int16_t);
+                float rms_energy = CalculateRMSEnergy(res->data, current_samples);
+                current_energy_dbfs_ = ConvertToDBFS(rms_energy);
+
+                // 检查能量是否满足阈值条件
+                bool energy_sufficient = CheckEnergyThreshold(current_energy_dbfs_);
+
+                // 只有VAD检测到语音且能量足够时才触发
+                if (energy_sufficient) {
+                    is_speaking_ = true;//检测到用户说话
+                    ESP_LOGI(TAG, "VAD triggered: energy=%.1fdBFS (smoothed=%.1fdBFS), threshold=%.1fdBFS",
+                             current_energy_dbfs_, smoothed_energy_dbfs_, vad_energy_threshold_dbfs_);
                 // 1. VAD算法固有延迟：VAD无法在首帧精准触发，可能有1-3帧延迟
                 // 2. 防误触机制：需持续触发时间达到vad_min_speech_ms才会正式触发
                 if (res->vad_cache_size > 0 && output_callback_) {
@@ -178,12 +192,14 @@ void AfeAudioProcessor::AudioProcessorTask() {
                                 res->vad_cache_size, (int)cache_samples);
 
                         try {
-                            // 预先保留空间，避免多次重新分配
-                            size_t new_size = output_buffer_.size() + cache_samples;
-                            output_buffer_.reserve(new_size);
+                            //检测到新语音时，清空旧缓冲区保证时间顺序
+                            output_buffer_.clear();
 
-                            // 优先处理缓存数据，避免首字截断
-                            output_buffer_.insert(output_buffer_.begin(), cache_data, cache_data + cache_samples);
+                            // 预先保留空间，避免多次重新分配
+                            output_buffer_.reserve(cache_samples);
+
+                            // 正确顺序：先添加VAD缓存数据（历史数据）
+                            output_buffer_.insert(output_buffer_.end(), cache_data, cache_data + cache_samples);
 
                             ESP_LOGI(TAG, "VAD cache processed successfully, buffer size: %d",
                                     (int)output_buffer_.size());
@@ -195,9 +211,21 @@ void AfeAudioProcessor::AudioProcessorTask() {
                     }
                 }
 
-                vad_state_change_callback_(true);
+                    vad_state_change_callback_(true);
+                } else {
+                    // VAD检测到语音但能量不足，记录但不触发
+                    static int low_energy_count = 0;
+                    if (++low_energy_count % 10 == 0) {  // 每10次记录一次
+                        ESP_LOGD(TAG, "VAD detected but energy insufficient: %.1fdBFS < %.1fdBFS",
+                                smoothed_energy_dbfs_, vad_energy_threshold_dbfs_);
+                    }
+                }
             } else if (res->vad_state == VAD_SILENCE && is_speaking_) {
-                is_speaking_ = false;//🎯 用户停止说话
+                is_speaking_ = false;//🎯用户停止说话
+                // 重置能量检测状态
+                energy_above_threshold_frames_ = 0;
+                energy_below_threshold_frames_ = 0;
+                ESP_LOGI(TAG, "VAD silence detected, final energy: %.1fdBFS", current_energy_dbfs_);
                 vad_state_change_callback_(false);
             }
         }
@@ -237,4 +265,106 @@ void AfeAudioProcessor::EnableDeviceAec(bool enable) {
         afe_iface_->disable_aec(afe_data_);
         afe_iface_->enable_vad(afe_data_);
     }
+}
+
+// VAD能量检测辅助函数实现
+float AfeAudioProcessor::CalculateRMSEnergy(const int16_t* data, size_t samples) {
+    if (!data || samples == 0) {
+        return 0.0f;
+    }
+
+    double sum_squares = 0.0;
+    for (size_t i = 0; i < samples; i++) {
+        double sample = static_cast<double>(data[i]) / 32768.0; // 归一化到[-1, 1]
+        sum_squares += sample * sample;
+    }
+
+    return static_cast<float>(sqrt(sum_squares / samples));
+}
+
+float AfeAudioProcessor::ConvertToDBFS(float rms) {
+    if (rms <= 0.0f) {
+        return -100.0f; // 静音时返回很低的dB值
+    }
+
+    // 转换为dBFS (0dBFS = 满量程)
+    return 20.0f * log10f(rms);
+}
+
+bool AfeAudioProcessor::CheckEnergyThreshold(float energy_dbfs) {
+    // 更新平滑后的能量值
+    smoothed_energy_dbfs_ = vad_energy_smooth_factor_ * energy_dbfs +
+                           (1.0f - vad_energy_smooth_factor_) * smoothed_energy_dbfs_;
+
+    // 检查能量是否超过阈值
+    if (smoothed_energy_dbfs_ > vad_energy_threshold_dbfs_) {
+        energy_above_threshold_frames_++;
+        energy_below_threshold_frames_ = 0;
+
+        // 需要连续几帧超过阈值才认为是真实语音 
+        return energy_above_threshold_frames_ >= vad_min_energy_frames_;
+    } else {
+        energy_below_threshold_frames_++;
+        energy_above_threshold_frames_ = 0;
+
+        // 连续几帧低于阈值就认为不是语音 
+        return energy_below_threshold_frames_ < vad_min_energy_frames_;
+    }
+}
+
+// VAD能量阈值动态调整方法
+void AfeAudioProcessor::SetVadEnergyThreshold(float threshold_dbfs) {
+    // 参数有效性检查
+    if (threshold_dbfs > 0.0f || threshold_dbfs < -100.0f) {
+        ESP_LOGW(TAG, "Invalid VAD energy threshold: %.1fdBFS (valid range: -100.0 to 0.0)", threshold_dbfs);
+        return;
+    }
+
+    float old_threshold = vad_energy_threshold_dbfs_;
+    vad_energy_threshold_dbfs_ = threshold_dbfs;
+
+    // 重置能量检测状态，避免阈值变化时的状态混乱
+    energy_above_threshold_frames_ = 0;
+    energy_below_threshold_frames_ = 0;
+
+    ESP_LOGI(TAG, "VAD energy threshold changed: %.1fdBFS -> %.1fdBFS",
+             old_threshold, threshold_dbfs);
+}
+
+float AfeAudioProcessor::GetCurrentEnergyLevel() const {
+    return smoothed_energy_dbfs_;
+}
+
+float AfeAudioProcessor::GetVadEnergyThreshold() const {
+    return vad_energy_threshold_dbfs_;
+}
+
+void AfeAudioProcessor::SetVadSmoothFactor(float smooth_factor) {
+    // 参数有效性检查
+    if (smooth_factor <= 0.0f || smooth_factor >= 1.0f) {
+        ESP_LOGW(TAG, "Invalid VAD smooth factor: %.2f (valid range: 0.0 to 1.0)", smooth_factor);
+        return;
+    }
+
+    float old_factor = vad_energy_smooth_factor_;
+    vad_energy_smooth_factor_ = smooth_factor;
+
+    ESP_LOGI(TAG, "VAD smooth factor changed: %.2f -> %.2f", old_factor, smooth_factor);
+}
+
+void AfeAudioProcessor::SetVadMinEnergyFrames(int min_frames) {
+    // 参数有效性检查
+    if (min_frames < 1 || min_frames > 10) {
+        ESP_LOGW(TAG, "Invalid VAD min energy frames: %d (valid range: 1 to 10)", min_frames);
+        return;
+    }
+
+    int old_frames = vad_min_energy_frames_;
+    vad_min_energy_frames_ = min_frames;
+
+    // 重置帧计数器
+    energy_above_threshold_frames_ = 0;
+    energy_below_threshold_frames_ = 0;
+
+    ESP_LOGI(TAG, "VAD min energy frames changed: %d -> %d", old_frames, min_frames);
 }

@@ -485,28 +485,12 @@ void MqttProtocol::SendAbortSpeaking(AbortReason reason) {
 
 
 
-    // 发布到tts/cancel主题，使用QoS=0提高成功率
-    bool sent = false;
-    for (int retry = 0; retry < 3 && !sent; retry++) {
-        // 每次重试前再次检查连接状态
-        if (!mqtt_->IsConnected()) {
-            ESP_LOGW(TAG, "MQTT disconnected during retry %d/3", retry + 1);
-            break;
-        }
+    // ：参考SendText的简洁实现，直接发送
+    if (mqtt_->Publish(cancel_topic, message, 0)) {  // QoS=0，快速发送
+        ESP_LOGI(TAG, "CancelTTS message sent to topic: %s", cancel_topic.c_str());
         ESP_LOGI(TAG, "Sending CancelTTS message: %s", message.c_str());
-        if (mqtt_->Publish(cancel_topic, message, 2)) {  
-            ESP_LOGI(TAG, "CancelTTS message sent to topic: %s", cancel_topic.c_str());
-            sent = true;
-        } else {
-            ESP_LOGW(TAG, "Failed to send CancelTTS message (attempt %d/3)", retry + 1);
-            if (retry < 2) {
-                vTaskDelay(pdMS_TO_TICKS(50)); 
-            }
-        }
-    }
-
-    if (!sent) {
-        ESP_LOGE(TAG, "Failed to send CancelTTS message after 3 attempts to topic: %s", cancel_topic.c_str());
+    } else {
+        ESP_LOGE(TAG, "Failed to send CancelTTS message to topic: %s", cancel_topic.c_str());
     }
 
     // 清理资源
