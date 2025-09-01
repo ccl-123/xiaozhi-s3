@@ -874,9 +874,9 @@ void Application::OnIMUTimer() {
             if (mqtt_protocol) {
                 // 使用IMU检测到的运动等级作为touch_value参数
                 // motion: 0=IDLE, 1=SLIGHT, 2=MODERATE, 3=INTENSE
-                // 只有运动等级>0时才会实际上传
+                // 只有运动等级>0或fall_state=3时才会实际上传
                 static int idle_skip_counter = 0;
-                if (imu_data.motion == 0) {
+                if ((imu_data.motion > 0) || (imu_data.fall_state == FALL_STATE_DETECTED)) {
                     if (++idle_skip_counter >= 10) { // 每5秒打印一次跳过信息 (0.5s * 10 = 5s)
                         ESP_LOGD(TAG, "IMU in IDLE state, skipping MQTT upload (motion=0)");
                         idle_skip_counter = 0;
@@ -884,7 +884,7 @@ void Application::OnIMUTimer() {
                 } else {
                     idle_skip_counter = 0; // 重置计数器
                 }
-                //mqtt_protocol->SendImuStatesAndValue(imu_data, imu_data.motion);
+                //mqtt_protocol->SendImuStatesAndValue(imu_data);
             }
             mqtt_counter = 0;
         }
