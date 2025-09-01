@@ -171,6 +171,17 @@ private:
     uint64_t stable_start_time_;
     bool possible_fall_;
 
+    // 摔倒检测参数
+    uint64_t impact_time_;           // 冲击检测时间
+    float max_gyro_magnitude_;       // 冲击后的最大角速度幅值
+
+    // 互补滤波相关参数
+    float filtered_angle_x_;         // 滤波后的X轴角度（pitch）
+    float filtered_angle_y_;         // 滤波后的Y轴角度（roll）
+    float filtered_angle_z_;         // 滤波后的Z轴角度（yaw）
+    uint64_t last_update_time_;      // 上次更新时间
+    float complementary_alpha_;      // 互补滤波系数 (0.98典型值)
+
     // 内部函数
     motion_level_t DetectMotion(t_sQMI8658 *p);
     void ConvertToPhysicalUnits(t_sQMI8658 *data);
@@ -193,6 +204,22 @@ public:
     
     // 角度计算
     void CalculateAngles(t_sQMI8658 *data);
+
+    // 🎯 互补滤波相关方法
+    void SetComplementaryAlpha(float alpha) {
+        if (alpha >= 0.9f && alpha <= 0.999f) {
+            complementary_alpha_ = alpha;
+        }
+    }
+    float GetComplementaryAlpha() const { return complementary_alpha_; }
+    void ResetComplementaryFilter() {
+        last_update_time_ = 0;
+        filtered_angle_x_ = filtered_angle_y_ = filtered_angle_z_ = 0.0f;
+    }
+
+    // 🎯 Z轴角度管理
+    void ResetZAxisAngle() { filtered_angle_z_ = 0.0f; }
+    void SetZAxisAngle(float angle) { filtered_angle_z_ = angle; }
     
     // 运动检测
     motion_level_t GetMotionLevel(t_sQMI8658 *data);

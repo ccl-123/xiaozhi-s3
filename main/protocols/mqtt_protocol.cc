@@ -369,11 +369,6 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data) {
         return;
     }
 
-    // 只有在运动等级大于0（非静止状态）时才上传IMU数据
-    if (imu_data.motion == 0) {
-        ESP_LOGD(TAG, "IMU in IDLE state (motion=0), skipping MQTT upload");
-        return;
-    }
 
     // 直接使用QMI8658类中已转换的物理单位数据
     float acc_x_g = imu_data.acc_x_g;
@@ -422,10 +417,16 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data) {
                  gyr_x_dps, gyr_y_dps, gyr_z_dps);
         ESP_LOGI(TAG, "Angles: X=%.4f°, Y=%.4f°, Z=%.4f°",
                  imu_data.AngleX, imu_data.AngleY, imu_data.AngleZ);
-        ESP_LOGI(TAG, "Motion Level: %d (%s) - UPLOADING TO MQTT", imu_data.motion,
+        ESP_LOGI(TAG, "Motion Level: %d (%s) ", imu_data.motion,
                  imu_data.motion == 0 ? "IDLE" :
                  imu_data.motion == 1 ? "SLIGHT" :
                  imu_data.motion == 2 ? "MODERATE" : "INTENSE");
+        ESP_LOGI(TAG, "Fall State: %d (%s)", imu_data.fall_state,
+                 imu_data.fall_state == 0 ? "NORMAL" :
+                 imu_data.fall_state == 1 ? "IMPACT" :
+                 imu_data.fall_state == 2 ? "CONFIRMING" :
+                 imu_data.fall_state == 3 ? "[DETECTED]" : "UNKNOWN");
+        ESP_LOGI(TAG, "Device ID: %s", user_id3_.c_str());
         ESP_LOGI(TAG, "====================================");
         log_counter = 0;
     }
@@ -443,7 +444,7 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data) {
 
 
     // 发布消息
-    //mqtt_->Publish(imu_topic, message);
+    mqtt_->Publish(imu_topic, message);
 
     // 清理资源
     cJSON_free(message_str);

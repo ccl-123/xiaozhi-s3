@@ -863,30 +863,44 @@ void Application::OnIMUTimer() {
         return;
     }
 
-
     t_sQMI8658 imu_data;
 
     if (imu_sensor_->ReadMotionData(&imu_data)) {
-        // 通过MQTT每125次读取（0.5秒）发送IMU数据 (4ms * 125 = 500ms)
-        static int mqtt_counter = 0;
-        if (++mqtt_counter >= 125) {
-            auto* mqtt_protocol = static_cast<MqttProtocol*>(protocol_.get());
-            if (mqtt_protocol) {
-                // 使用IMU检测到的运动等级作为touch_value参数
-                // motion: 0=IDLE, 1=SLIGHT, 2=MODERATE, 3=INTENSE
-                // 只有运动等级>0或fall_state=3时才会实际上传
-                static int idle_skip_counter = 0;
-                if ((imu_data.motion > 0) || (imu_data.fall_state == FALL_STATE_DETECTED)) {
-                    if (++idle_skip_counter >= 10) { // 每5秒打印一次跳过信息 (0.5s * 10 = 5s)
-                        ESP_LOGD(TAG, "IMU in IDLE state, skipping MQTT upload (motion=0)");
-                        idle_skip_counter = 0;
-                    }
-                } else {
-                    idle_skip_counter = 0; // 重置计数器
+        auto* mqtt_protocol = static_cast<MqttProtocol*>(protocol_.get());
+        if (mqtt_protocol) {
+            // 🚨 跌倒检测：防重复上传机制
+            static int last_fall_state = FALL_STATE_NORMAL;
+            static uint64_t last_fall_upload_time = 0;
+
+            if (imu_data.fall_state == static_cast<int>(FALL_STATE_DETECTED)) {
+                uint64_t current_time = esp_timer_get_time() / 1000; // 毫秒
+
+                // 检测到新的跌倒事件（状态从非DETECTED变为DETECTED）
+                bool new_fall_detected = (last_fall_state != FALL_STATE_DETECTED);
+
+                // 防止重复上传：5秒内不重复上传同一跌倒事件
+                bool cooldown_expired = (current_time - last_fall_upload_time) > 5000;
+
+                if (new_fall_detected || cooldown_expired) {
+                    ESP_LOGW(TAG, "🚨 FALL DETECTED - IMMEDIATE UPLOAD! fall_state=%d, new_fall=%s, cooldown_expired=%s",
+                            imu_data.fall_state, new_fall_detected ? "true" : "false", cooldown_expired ? "true" : "false");
+                    mqtt_protocol->SendImuStatesAndValue(imu_data);
+                    last_fall_upload_time = current_time;
                 }
-                //mqtt_protocol->SendImuStatesAndValue(imu_data);
+                last_fall_state = imu_data.fall_state;
+                return;
             }
-            mqtt_counter = 0;
+
+            last_fall_state = imu_data.fall_state;
+            // 通过MQTT每125次读取（0.5秒）发送IMU数据 (4ms * 125 = 500ms)
+            static int mqtt_counter = 0;
+            if (++mqtt_counter >= 125) {
+                // 只有运动等级>0时才会实际上传
+               if (imu_data.motion >0) {
+                    mqtt_protocol->SendImuStatesAndValue(imu_data);
+                }
+                mqtt_counter = 0;
+            }
         }
     } else {
         // 读取失败时的错误日志
