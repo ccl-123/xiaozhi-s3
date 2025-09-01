@@ -12,6 +12,7 @@ class LichuangDevBoard;
 #include "font_awesome_symbols.h"
 #include "assets/lang_config.h"
 #include "mcp_server.h"
+#include "boards/lichuang-dev/uart_433.h"  // 433MHz UART通信
 
 #include <cstring>
 #include <esp_log.h>
@@ -361,6 +362,9 @@ void Application::Start() {
 
     /* Initialize IMU sensor */
     InitializeIMU();
+
+    /* Initialize 433MHz UART task */
+    Initialize433MHz();
 
     /* Wait for the network to be ready */
     board.StartNetwork();
@@ -858,6 +862,54 @@ void Application::InitializeIMU() {
     }
 }
 
+void Application::Initialize433MHz() {
+#if UART_433_ENABLE
+    ESP_LOGI(TAG, "Initializing 433MHz UART task...");
+
+    // 初始化UART硬件
+    UART_433_Init();
+
+    // 验证UART是否成功初始化
+    if (!UART_433_IsInitialized()) {
+        ESP_LOGE(TAG, "433MHz UART initialization failed!");
+        return;
+    }
+
+    // 创建433MHz接收任务
+    BaseType_t result = xTaskCreate([](void *arg){
+        Application* app = static_cast<Application*>(arg);
+        static uint16_t uart_433_tx_cnt = 600;  // MAC地址发送计数（60秒）
+
+        ESP_LOGI("UART_433_Task", "433MHz task started on core %d", xPortGetCoreID());
+
+        while (true) {
+            UART_433_RX_DATA();  // 接收数据处理
+
+            // 发送MAC地址（开机后60秒内，每100ms发送一次）
+            #if SEND_MAC_ADDRESS_433
+            if (uart_433_tx_cnt > 0) {
+                UART_433_TX_DATA(SystemInfo::GetMacAddress().c_str());
+                uart_433_tx_cnt--;
+                if (uart_433_tx_cnt == 0) {
+                    ESP_LOGI("UART_433_Task", "433MHz MAC address broadcast completed");
+                }
+            }
+            #endif
+
+            vTaskDelay(100 / portTICK_PERIOD_MS);  // 100ms周期
+        }
+    }, "UART_433_RX_Task", 4096, this, 1, NULL);
+
+    if (result == pdPASS) {
+        ESP_LOGI(TAG, "433MHz UART task created successfully");
+    } else {
+        ESP_LOGE(TAG, "Failed to create 433MHz UART task");
+    }
+#else
+    ESP_LOGD(TAG, "433MHz UART is disabled");
+#endif
+}
+
 void Application::OnIMUTimer() {
     if (!imu_sensor_ || !imu_sensor_->IsInitialized()) {
         return;
@@ -884,7 +936,7 @@ void Application::OnIMUTimer() {
                 if (new_fall_detected || cooldown_expired) {
                     ESP_LOGW(TAG, "🚨 FALL DETECTED - IMMEDIATE UPLOAD! fall_state=%d, new_fall=%s, cooldown_expired=%s",
                             imu_data.fall_state, new_fall_detected ? "true" : "false", cooldown_expired ? "true" : "false");
-                    mqtt_protocol->SendImuStatesAndValue(imu_data);
+                    mqtt_protocol->SendImuStatesAndValue(imu_data, 0);  // 跌倒检测，touch_value=0
                     last_fall_upload_time = current_time;
                 }
                 last_fall_state = imu_data.fall_state;
@@ -892,12 +944,29 @@ void Application::OnIMUTimer() {
             }
 
             last_fall_state = imu_data.fall_state;
+
+            // 🎯 检查433MHz按键事件
+#if UART_433_ENABLE
+            static bool last_key_433_press = false;
+            bool key_event_detected = (key_433_press && !last_key_433_press);
+            last_key_433_press = key_433_press;
+
+            if (key_event_detected) {
+                ESP_LOGW(TAG, "🔘 433MHz Key pressed: '%c' (value: %d) - IMMEDIATE UPLOAD!",
+                        button_value, button_value_int);
+                mqtt_protocol->SendImuStatesAndValue(imu_data, button_value_int);
+                // 重置按键状态
+                key_433_press = false;
+                return;
+            }
+#endif
+
             // 通过MQTT每125次读取（0.5秒）发送IMU数据 (4ms * 125 = 500ms)
             static int mqtt_counter = 0;
             if (++mqtt_counter >= 125) {
                 // 只有运动等级>0时才会实际上传
-               if (imu_data.motion >0) {
-                    mqtt_protocol->SendImuStatesAndValue(imu_data);
+               if (imu_data.motion > 0) {
+                    mqtt_protocol->SendImuStatesAndValue(imu_data, 0);  // 正常IMU数据，touch_value=0
                 }
                 mqtt_counter = 0;
             }

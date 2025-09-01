@@ -7,6 +7,7 @@
 #include "i2c_device.h"  // IMU需要I2C设备
 #include "qmi8658.h"     // IMU传感器
 #include "led/single_led.h"  // RGB LED支持
+#include "uart_433.h"    // 433MHz UART通信
 
 
 #include <esp_log.h>
@@ -186,6 +187,12 @@ public:
         InitializeSpi();
         InitializeSt7789Display();
         InitializeButtons();
+
+        // 初始化433MHz UART通信
+#if UART_433_ENABLE
+        UART_433_Init();
+        ESP_LOGI(TAG, "433MHz UART initialized");
+#endif
 
         GetBacklight()->RestoreBrightness();
     }

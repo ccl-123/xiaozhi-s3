@@ -35,7 +35,7 @@ public:
     void UpdateLanguage(const std::string& language);
 
     // IMU数据发送方法
-    void SendImuStatesAndValue(const t_sQMI8658& imu_data);
+    void SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_value = 0);
 
     // 重写基类方法，适配自定义服务器格式
     void SendAbortSpeaking(AbortReason reason) override;

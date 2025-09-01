@@ -3,6 +3,8 @@
 #include "application.h"
 #include "settings.h"
 #include "system_info.h"
+#include "imu/qmi8658.h"  // 🎯 添加：用于FALL_STATE_DETECTED常量
+#include "boards/lichuang-dev/uart_433.h"  // 🎯 添加：433MHz按键值
 
 #include <esp_log.h>
 #include <cstring>
@@ -345,7 +347,7 @@ bool MqttProtocol::IsAudioChannelOpened() const {
     return mqtt_ != nullptr && mqtt_->IsConnected() && !error_occurred_ && !IsTimeout();
 }
 
-void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data) {
+void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_value) {
     if (mqtt_ == nullptr || !mqtt_->IsConnected()) {
         ESP_LOGE(TAG, "MQTT client not connected");
         return;
@@ -402,7 +404,8 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data) {
     cJSON_AddNumberToObject(root, "angle_y", imu_data.AngleY); // °单位
     cJSON_AddNumberToObject(root, "angle_z", imu_data.AngleZ); // °单位
 
-    cJSON_AddNumberToObject(root, "touch_value", 0);
+    // 🎯 添加433MHz按键值作为touch_value
+    cJSON_AddNumberToObject(root, "touch_value", touch_value);
     cJSON_AddNumberToObject(root, "fall_state", imu_data.fall_state);//跌倒检测
     // 添加设备ID
     cJSON_AddStringToObject(root, "device_id", user_id3_.c_str());
@@ -426,6 +429,9 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data) {
                  imu_data.fall_state == 1 ? "IMPACT" :
                  imu_data.fall_state == 2 ? "CONFIRMING" :
                  imu_data.fall_state == 3 ? "[DETECTED]" : "UNKNOWN");
+#if UART_433_ENABLE
+        ESP_LOGI(TAG, "433MHz Button: '%c' (value: %d)", button_value, button_value_int);
+#endif
         ESP_LOGI(TAG, "Device ID: %s", user_id3_.c_str());
         ESP_LOGI(TAG, "====================================");
         log_counter = 0;
