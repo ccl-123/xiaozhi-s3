@@ -61,7 +61,10 @@ void AudioService::Initialize(AudioCodec* codec) {
 #endif
 
     audio_processor_->OnOutput([this](std::vector<int16_t>&& data) {
-        PushTaskToEncodeQueue(kAudioTaskTypeEncodeToSendQueue, std::move(data));
+        // 只有在音频上传开启时才处理音频数据
+        if (audio_upload_enabled_) {
+            PushTaskToEncodeQueue(kAudioTaskTypeEncodeToSendQueue, std::move(data));
+        }
     });
 
     audio_processor_->OnVadStateChange([this](bool speaking) {
@@ -104,14 +107,14 @@ void AudioService::Start() {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioInputTask();
         vTaskDelete(NULL);
-    }, "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 1);
+    }, "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 1);  // 增加到8KB
 
     /* Start the audio output task */
     xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioOutputTask();
         vTaskDelete(NULL);
-    }, "audio_output", 2048 * 2, this, 3, &audio_output_task_handle_);
+    }, "audio_output", 2048 * 2, this, 3, &audio_output_task_handle_);  // 增加栈大小到8KB
 #else
     /* Start the audio input task */
     xTaskCreate([](void* arg) {
@@ -351,9 +354,9 @@ void AudioService::OpusCodecTask() {
 
                 lock.lock();
                 audio_playback_queue_.push_back(std::move(task));
-                ESP_LOGI(TAG, "[AUDIO-DECODE] ✅ PCM ready, 📦PLAY_Q=[%u/%u], 🔄DECODE_Q=[%u/%u]",
-                         (unsigned)audio_playback_queue_.size(), (unsigned)MAX_PLAYBACK_TASKS_IN_QUEUE,
-                         (unsigned)audio_decode_queue_.size(), (unsigned)MAX_DECODE_PACKETS_IN_QUEUE);
+                // ESP_LOGI(TAG, "[AUDIO-DECODE] ✅ PCM ready, 📦PLAY_Q=[%u/%u], 🔄DECODE_Q=[%u/%u]",
+                //          (unsigned)audio_playback_queue_.size(), (unsigned)MAX_PLAYBACK_TASKS_IN_QUEUE,
+                //          (unsigned)audio_decode_queue_.size(), (unsigned)MAX_DECODE_PACKETS_IN_QUEUE);
                 audio_queue_cv_.notify_all();
             } else {
                 ESP_LOGE(TAG, "Failed to decode audio");
@@ -537,6 +540,11 @@ void AudioService::EnableAudioTesting(bool enable) {
         audio_decode_queue_ = std::move(audio_testing_queue_);
         audio_queue_cv_.notify_all();
     }
+}
+
+void AudioService::EnableAudioUpload(bool enable) {
+    ESP_LOGI(TAG, "%s audio upload", enable ? "Enabling" : "Disabling");
+    audio_upload_enabled_ = enable;
 }
 
 void AudioService::EnableDeviceAec(bool enable) {

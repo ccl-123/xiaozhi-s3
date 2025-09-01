@@ -220,8 +220,16 @@ void MqttProtocol::UpdateLanguage(const std::string& language) {
 
 bool MqttProtocol::SendText(const std::string& text) {
     if (publish_topic_.empty()) {
+        ESP_LOGW(TAG, "Publish topic is empty");
         return false;
     }
+
+    // 检查MQTT连接状态
+    if (mqtt_ == nullptr || !mqtt_->IsConnected()) {
+        ESP_LOGW(TAG, "MQTT not connected, cannot send text message");
+        return false;
+    }
+
     if (!mqtt_->Publish(publish_topic_, text)) {
         ESP_LOGE(TAG, "Failed to publish message: %s", text.c_str());
         SetError(Lang::Strings::SERVER_ERROR);
@@ -337,7 +345,7 @@ bool MqttProtocol::IsAudioChannelOpened() const {
     return mqtt_ != nullptr && mqtt_->IsConnected() && !error_occurred_ && !IsTimeout();
 }
 
-void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_value) {
+void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data) {
     if (mqtt_ == nullptr || !mqtt_->IsConnected()) {
         ESP_LOGE(TAG, "MQTT client not connected");
         return;
@@ -399,8 +407,8 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
     cJSON_AddNumberToObject(root, "angle_y", imu_data.AngleY); // °单位
     cJSON_AddNumberToObject(root, "angle_z", imu_data.AngleZ); // °单位
 
-    cJSON_AddNumberToObject(root, "touch_value", touch_value);
-    //cJSON_AddNumberToObject(root, "fall_state", imu_data.fall_state);//跌倒检测
+    cJSON_AddNumberToObject(root, "touch_value", 0);
+    cJSON_AddNumberToObject(root, "fall_state", imu_data.fall_state);//跌倒检测
     // 添加设备ID
     cJSON_AddStringToObject(root, "device_id", user_id3_.c_str());
 
@@ -443,14 +451,16 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
 }
 
 void MqttProtocol::SendAbortSpeaking(AbortReason reason) {
+    // 检查MQTT连接状态
+    if (mqtt_ == nullptr || !mqtt_->IsConnected()) {
+        ESP_LOGW(TAG, "MQTT not connected, cannot send CancelTTS message");
+        return;
+    }
+
     // 获取设备ID（MAC地址的十进制表示）
     std::string device_id = SystemInfo::GetMacAddressDecimal();
 
-    // 根据中止原因决定action值
-    // kAbortReasonWakeWordDetected: 用户主动打断，使用"stop"
-    // kAbortReasonNone: 正常结束，使用"finish"
-    bool is_finish = (reason != kAbortReasonWakeWordDetected);
-    std::string action = is_finish ? "finish" : "stop";
+    std::string action = "stop";
 
     // 构建JSON消息
     cJSON* root = cJSON_CreateObject();
@@ -473,11 +483,12 @@ void MqttProtocol::SendAbortSpeaking(AbortReason reason) {
     std::string message(message_str);
     std::string cancel_topic = "tts/cancel";
 
-    ESP_LOGI(TAG, "Sending CancelTTS message: %s", message.c_str());
 
-    // 发布到tts/cancel主题，QoS=2确保消息送达
-    if (mqtt_->Publish(cancel_topic, message, 2)) {
+
+    // ：参考SendText的简洁实现，直接发送
+    if (mqtt_->Publish(cancel_topic, message, 0)) {  // QoS=0，快速发送
         ESP_LOGI(TAG, "CancelTTS message sent to topic: %s", cancel_topic.c_str());
+        ESP_LOGI(TAG, "Sending CancelTTS message: %s", message.c_str());
     } else {
         ESP_LOGE(TAG, "Failed to send CancelTTS message to topic: %s", cancel_topic.c_str());
     }

@@ -98,6 +98,7 @@ public:
     void EnableVoiceProcessing(bool enable);
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
+    void EnableAudioUpload(bool enable);
 
     void SetCallbacks(AudioServiceCallbacks& callbacks);
 
@@ -141,6 +142,7 @@ private:
     bool voice_detected_ = false;
     bool service_stopped_ = true;
     bool audio_input_need_warmup_ = false;
+    bool audio_upload_enabled_ = true;
 
     esp_timer_handle_t audio_power_timer_ = nullptr;
     std::chrono::steady_clock::time_point last_input_time_;
