@@ -40,6 +40,7 @@
 #define BUILTIN_LED_GPIO        GPIO_NUM_48
 #define RGB_LED_GPIO            GPIO_NUM_11  // RGB LED (WS2812) on GPIO 11
 #define BOOT_BUTTON_GPIO        GPIO_NUM_0
+#define POWER_BUTTON_GPIO       GPIO_NUM_47  // 电源按键 IO47 (与旧项目功能一致)
 #define VOLUME_UP_BUTTON_GPIO   GPIO_NUM_NC
 #define VOLUME_DOWN_BUTTON_GPIO GPIO_NUM_NC
 

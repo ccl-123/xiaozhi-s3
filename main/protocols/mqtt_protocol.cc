@@ -398,18 +398,14 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
     cJSON_AddNumberToObject(root, "ay", acc_y_g);            // g单位
     cJSON_AddNumberToObject(root, "az", acc_z_g);            // g单位
 
-
-    // 角度数据（IMU模块中已处理精度）
-    cJSON_AddNumberToObject(root, "angle_x", imu_data.AngleX); // °单位
-    cJSON_AddNumberToObject(root, "angle_y", imu_data.AngleY); // °单位
-    cJSON_AddNumberToObject(root, "angle_z", imu_data.AngleZ); // °单位
-
     // 🎯 添加433MHz按键值作为touch_value
     cJSON_AddNumberToObject(root, "touch_value", touch_value);
-    cJSON_AddNumberToObject(root, "fall_state", imu_data.fall_state);//跌倒检测
+
     // 添加设备ID
     cJSON_AddStringToObject(root, "device_id", user_id3_.c_str());
 
+    cJSON_AddNumberToObject(root, "fall_state", imu_data.fall_state);//跌倒检测
+    
     // 打印IMU数据到日志（使用已转换的物理单位值）
     static int log_counter = 0;
     if (++log_counter >= 1) {  // 每1次发送（0.5秒）打印一次详细数据
@@ -418,8 +414,6 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
                  acc_x_g, acc_y_g, acc_z_g);
         ESP_LOGI(TAG, "Gyroscope: X=%.4f°/s, Y=%.4f°/s, Z=%.4f°/s",
                  gyr_x_dps, gyr_y_dps, gyr_z_dps);
-        ESP_LOGI(TAG, "Angles: X=%.4f°, Y=%.4f°, Z=%.4f°",
-                 imu_data.AngleX, imu_data.AngleY, imu_data.AngleZ);
         ESP_LOGI(TAG, "Motion Level: %d (%s) ", imu_data.motion,
                  imu_data.motion == 0 ? "IDLE" :
                  imu_data.motion == 1 ? "SLIGHT" :

@@ -22,6 +22,9 @@
 
 #define TAG "LichuangDevBoard"
 
+// 前向声明SetPowerOffset函数
+void SetPowerOffset(bool a);
+
 LV_FONT_DECLARE(font_puhui_20_4);
 LV_FONT_DECLARE(font_awesome_20_4);
 
@@ -79,9 +82,18 @@ public:
 class LichuangDevBoard : public WifiBoard {
 private:
     i2c_master_bus_handle_t i2c_bus_;
-    Button boot_button_;
+    Button boot_button_;   // GPIO0标准BOOT按键
+    Button power_button_;  // GPIO47电源按键 (对应旧项目的BOOT_BUTTON_GPIO)
     LcdDisplay* display_;
     QMI8658* imu_sensor_;
+
+    // 三连击检测变量 (与旧项目完全一致)
+    int power_click_count_ = 0;
+    int64_t last_click_time_ = 0;
+    static const int CLICK_TIMEOUT_MS = 1000; // 1秒内需要完成3次点击
+
+    // GPIO47测试任务相关
+    TaskHandle_t gpio47_test_task_ = nullptr;
 
     void InitializeI2c() {
         // Initialize I2C peripheral
@@ -118,6 +130,7 @@ private:
     }
 
     void InitializeButtons() {
+        // GPIO0 BOOT按键：保持原有功能
         boot_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting && !WifiStation::GetInstance().IsConnected()) {
@@ -126,15 +139,74 @@ private:
             app.ToggleChatState();
         });
 
-#if CONFIG_USE_DEVICE_AEC
-        boot_button_.OnDoubleClick([this]() {
-            auto& app = Application::GetInstance();
-            if (app.GetDeviceState() == kDeviceStateIdle) {
-                app.SetAecMode(app.GetAecMode() == kAecOff ? kAecOnDeviceSide : kAecOff);
+        // GPIO47电源按键：完全按照旧项目实现三连击配网功能
+        power_button_.OnClick([this]() {
+            int64_t current_time = esp_timer_get_time() / 1000;  // 转换为毫秒
+
+            // 如果距离上次点击超过1秒，重置计数器
+            if (current_time - last_click_time_ > CLICK_TIMEOUT_MS) {
+                power_click_count_ = 0;
+            }
+
+            power_click_count_++;
+            last_click_time_ = current_time;
+
+            ESP_LOGI(TAG, "Power button click count: %d", power_click_count_);
+
+            // 检查是否在1秒内完成了3次点击
+            if (power_click_count_ >= 3) {
+                power_click_count_ = 0;     // 重置计数器
+                ESP_LOGI(TAG, "Power button triple click detected - entering WiFi config mode");
+                ResetWifiConfiguration();  // 直接进入配网模式，不检查设备状态
             }
         });
-#endif
+
+        // GPIO47电源按键：完全按照旧项目实现长按关机功能
+        power_button_.OnLongPress([this]() {
+            ESP_LOGI(TAG, "Power button long press detected - powering off");
+            SetPowerOffset(false);  // 关机
+        });
+
+        // GPIO47电平检测测试任务
+        //StartGpio47TestTask();
     }
+
+    void StartGpio47TestTask() {
+        ESP_LOGI(TAG, "Starting GPIO47 test task...");
+
+        xTaskCreate([](void* param) {
+            LichuangDevBoard* board = static_cast<LichuangDevBoard*>(param);
+            board->Gpio47TestTask();
+        }, "gpio47_test", 2048, this, 5, &gpio47_test_task_);
+    }
+
+    void Gpio47TestTask() {
+        ESP_LOGI(TAG, "GPIO47 test task started - monitoring button level");
+        ESP_LOGI(TAG, "Hardware: 下拉电阻设计，按键按下=高电平(1)，松开=低电平(0)");
+
+        int last_level = -1;
+        int press_count = 0;
+
+        while (true) {
+            int current_level = gpio_get_level(GPIO_NUM_47);
+
+            if (current_level != last_level) {
+                if (current_level == 1) {
+                    // 下拉电阻设计：高电平 = 按键按下
+                    press_count++;
+                    ESP_LOGI(TAG, "🔴 BUTTON PRESSED (Level=1) - Press count: %d", press_count);
+                } else {
+                    // 下拉电阻设计：低电平 = 按键松开
+                    ESP_LOGI(TAG, "🟢 BUTTON RELEASED (Level=0)");
+                }
+                last_level = current_level;
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(50)); // 50ms检测间隔
+        }
+    }
+
+
 
     void InitializeSt7789Display() {
         esp_lcd_panel_io_handle_t panel_io = nullptr;
@@ -182,10 +254,16 @@ private:
 
 
 public:
-    LichuangDevBoard() : boot_button_(BOOT_BUTTON_GPIO) {
+    LichuangDevBoard() : boot_button_(BOOT_BUTTON_GPIO),
+                        power_button_(POWER_BUTTON_GPIO, true, 3000, 50, false) {
+        // GPIO0: 标准BOOT按键，使用默认配置
+        // GPIO47: 电源按键，下拉电阻设计，按键按下=高电平，active_high=true
         InitializeI2c();
         InitializeSpi();
         InitializeSt7789Display();
+
+        // GPIO4电源控制已在Button构造函数中初始化 (与旧项目完全一致)
+
         InitializeButtons();
 
         // 初始化433MHz UART通信
@@ -195,7 +273,11 @@ public:
 #endif
 
         GetBacklight()->RestoreBrightness();
+
+        ESP_LOGI(TAG, "LichuangDevBoard initialized with power management (GPIO47 button, GPIO4 power control)");
     }
+
+
 
     virtual AudioCodec* GetAudioCodec() override {
         static CustomAudioCodec audio_codec(i2c_bus_);
@@ -227,3 +309,12 @@ public:
 };
 
 DECLARE_BOARD(LichuangDevBoard);
+
+// lichuang-dev电源控制函数 (与旧项目一致但缺少led控制)
+void SetPowerOffset(bool a) {
+    // 电源控制逻辑:
+    // true(1) = 维持供电 (正常运行状态)
+    // false(0) = 切断供电 (系统关机，需按键重新开机)
+    gpio_set_level(GPIO_NUM_4, a);
+    ESP_LOGI("SetPowerOffset", "Power control GPIO4 set to %s", a ? "HIGH (maintain power)" : "LOW (power off)");
+}

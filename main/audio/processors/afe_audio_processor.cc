@@ -42,7 +42,7 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms) {
     afe_config_t* afe_config = afe_config_init(input_format.c_str(), NULL, AFE_TYPE_VC, AFE_MODE_HIGH_PERF);
     afe_config->aec_mode = AEC_MODE_VOIP_HIGH_PERF;
     afe_config->vad_mode = VAD_MODE_1;  // 数值越大触发概率越高
-    afe_config->vad_min_noise_ms = 800;  // 800ms静音时长，降低误触发（官方推荐1000ms）
+    afe_config->vad_min_noise_ms = 500;  // 500ms静音时长，降低误触发
     
     // 添加更多VAD调优参数以降低灵敏度（使用ESP-SR实际支持的参数）
     afe_config->vad_min_speech_ms = 128;  // 语音段的最短持续时间（毫秒）
