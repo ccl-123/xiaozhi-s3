@@ -593,11 +593,11 @@ void Application::MainEventLoop() {
                 bool voice_detected = audio_service_.IsVoiceDetected();
                 if (voice_detected) {
                     // 检测到用户说话：开启音频上传并发送打断指令
-                    ESP_LOGI(TAG, "User speech detected during TTS playback, enabling audio upload");
+                    ESP_LOGW(TAG, "🔊 [SPEAKING-VAD] 检测到用户打断TTS，开启音频上传！");
                     audio_service_.EnableAudioUpload(true);
                     AbortSpeaking(kAbortReasonNone);
                 } else {
-
+                    ESP_LOGW(TAG, "🔇 [SPEAKING-VAD] 用户停止说话，关闭音频上传");
                     audio_service_.EnableAudioUpload(false);
                 }
             }
@@ -620,6 +620,9 @@ void Application::OnWakeWordDetected() {
     }
 
     if (device_state_ == kDeviceStateIdle) {
+        // 🎵 播放叮咚音效 - 无论AFE/AEC是否开启都播放
+        audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
+
         audio_service_.EncodeWakeWord();
 
         if (!protocol_->IsAudioChannelOpened()) {
@@ -631,7 +634,7 @@ void Application::OnWakeWordDetected() {
         }
 
         auto wake_word = audio_service_.GetLastWakeWord();
-        ESP_LOGI(TAG, "Wake word detected: ======================%s=========================", wake_word.c_str());
+        ESP_LOGI(TAG, "Wake word detected with ding-dong sound: ======================%s=========================", wake_word.c_str());
 #if CONFIG_USE_AFE_WAKE_WORD || CONFIG_USE_CUSTOM_WAKE_WORD
         // Encode and send the wake word data to the server
         while (auto packet = audio_service_.PopWakeWordPacket()) {
@@ -642,8 +645,7 @@ void Application::OnWakeWordDetected() {
         SetListeningMode(aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime);
 #else
         SetListeningMode(aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime);
-        // Play the pop up sound to indicate the wake word is detected
-        audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
+        // Note: 叮咚音效已在上面统一播放，这里不再重复播放
 #endif
     } else if (device_state_ == kDeviceStateSpeaking) {
         AbortSpeaking(kAbortReasonWakeWordDetected);
@@ -877,7 +879,7 @@ void Application::Initialize433MHz() {
 
     // 创建433MHz接收任务
     BaseType_t result = xTaskCreate([](void *arg){
-        Application* app = static_cast<Application*>(arg);
+        (void)arg;  
         static uint16_t uart_433_tx_cnt = 600;  // MAC地址发送计数（60秒）
 
         ESP_LOGI("UART_433_Task", "433MHz task started on core %d", xPortGetCoreID());
@@ -966,7 +968,7 @@ void Application::OnIMUTimer() {
             if (++mqtt_counter >= 125) {
                 // 只有运动等级>0时才会实际上传
                if (imu_data.motion > 0) {
-                    mqtt_protocol->SendImuStatesAndValue(imu_data, 0);  // 正常IMU数据，touch_value=0
+                    //mqtt_protocol->SendImuStatesAndValue(imu_data, 0);  // 正常IMU数据，touch_value=0
                 }
                 mqtt_counter = 0;
             }

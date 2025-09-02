@@ -53,7 +53,7 @@ private:
     int energy_below_threshold_frames_ = 0;   // 连续低于阈值的帧数
     float vad_energy_threshold_dbfs_ = -40.0f; // 🎯 核心：能量阈值
     float vad_energy_smooth_factor_ = 0.5f;   // 🎯 能量平滑因子
-    int vad_min_energy_frames_ = 2;           // 🎯 连续帧数阈值
+    int vad_min_energy_frames_ = 1;           // 🎯 连续帧数阈值
     bool vad_cache_just_processed_ = false;   // 🎯 标记是否刚处理了VAD缓存
 
     void AudioProcessorTask();

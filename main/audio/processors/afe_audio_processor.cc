@@ -176,7 +176,7 @@ void AfeAudioProcessor::AudioProcessorTask() {
                 // 2. 防误触机制：需持续触发时间达到vad_min_speech_ms才会正式触发
                 if (res->vad_cache_size > 0 && output_callback_) {
                     // 🛡️ 增强安全检查
-                    const size_t MAX_CACHE_SIZE = 16384;  // 8KB最大缓存限制
+                    const size_t MAX_CACHE_SIZE = 8192;  // 8KB最大缓存限制
 
                     if (res->vad_cache == nullptr) {
                         ESP_LOGE(TAG, "VAD cache pointer is null");

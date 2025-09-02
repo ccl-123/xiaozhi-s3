@@ -92,7 +92,7 @@ void UART_433_RX_DATA(void) {
             ESP_LOGD(TAG, "Received %d bytes: %.*s", bytes_read, bytes_read, uart_433_data);
             
             // 协议解析：查找固定帧头"LC:"
-            char* frame_header = "LC:";
+            const char* frame_header = "LC:";  // 修复：使用const char*避免警告
             char* frame_data = (char*)uart_433_data;
             char* header_position = strstr(frame_data, frame_header);
             
