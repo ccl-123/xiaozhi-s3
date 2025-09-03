@@ -431,6 +431,8 @@ void Application::Start() {
             if (strcmp(state->valuestring, "start") == 0) {
                 ESP_LOGW(TAG, "--------------------GET START----------------------");
                 Schedule([this]() {
+                    // 无论当前状态如何，都先清空旧音频
+                    audio_service_.ResetDecoder();
                     aborted_ = false;
                     if (device_state_ == kDeviceStateIdle || device_state_ == kDeviceStateListening) {
                         SetDeviceState(kDeviceStateSpeaking);
