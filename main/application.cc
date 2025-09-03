@@ -12,6 +12,7 @@ class LichuangDevBoard;
 #include "font_awesome_symbols.h"
 #include "assets/lang_config.h"
 #include "mcp_server.h"
+#include "boards/lichuang-dev/uart_433.h"  // 433MHz UART通信
 
 #include <cstring>
 #include <esp_log.h>
@@ -362,6 +363,9 @@ void Application::Start() {
     /* Initialize IMU sensor */
     InitializeIMU();
 
+    /* Initialize 433MHz UART task */
+    Initialize433MHz();
+
     /* Wait for the network to be ready */
     board.StartNetwork();
 
@@ -427,6 +431,8 @@ void Application::Start() {
             if (strcmp(state->valuestring, "start") == 0) {
                 ESP_LOGW(TAG, "--------------------GET START----------------------");
                 Schedule([this]() {
+                    // 无论当前状态如何，都先清空旧音频
+                    audio_service_.ResetDecoder();
                     aborted_ = false;
                     if (device_state_ == kDeviceStateIdle || device_state_ == kDeviceStateListening) {
                         SetDeviceState(kDeviceStateSpeaking);
@@ -589,11 +595,11 @@ void Application::MainEventLoop() {
                 bool voice_detected = audio_service_.IsVoiceDetected();
                 if (voice_detected) {
                     // 检测到用户说话：开启音频上传并发送打断指令
-                    ESP_LOGI(TAG, "User speech detected during TTS playback, enabling audio upload");
+                    ESP_LOGW(TAG, "🔊 [SPEAKING-VAD] 检测到用户打断TTS，开启音频上传！");
                     audio_service_.EnableAudioUpload(true);
                     AbortSpeaking(kAbortReasonNone);
                 } else {
-
+                    ESP_LOGW(TAG, "🔇 [SPEAKING-VAD] 用户停止说话，关闭音频上传");
                     audio_service_.EnableAudioUpload(false);
                 }
             }
@@ -616,6 +622,9 @@ void Application::OnWakeWordDetected() {
     }
 
     if (device_state_ == kDeviceStateIdle) {
+        // 🎵 播放叮咚音效 - 无论AFE/AEC是否开启都播放
+        audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
+
         audio_service_.EncodeWakeWord();
 
         if (!protocol_->IsAudioChannelOpened()) {
@@ -627,7 +636,7 @@ void Application::OnWakeWordDetected() {
         }
 
         auto wake_word = audio_service_.GetLastWakeWord();
-        ESP_LOGI(TAG, "Wake word detected: ======================%s=========================", wake_word.c_str());
+        ESP_LOGI(TAG, "Wake word detected with ding-dong sound: ======================%s=========================", wake_word.c_str());
 #if CONFIG_USE_AFE_WAKE_WORD || CONFIG_USE_CUSTOM_WAKE_WORD
         // Encode and send the wake word data to the server
         while (auto packet = audio_service_.PopWakeWordPacket()) {
@@ -638,8 +647,7 @@ void Application::OnWakeWordDetected() {
         SetListeningMode(aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime);
 #else
         SetListeningMode(aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime);
-        // Play the pop up sound to indicate the wake word is detected
-        audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
+        // Note: 叮咚音效已在上面统一播放，这里不再重复播放
 #endif
     } else if (device_state_ == kDeviceStateSpeaking) {
         AbortSpeaking(kAbortReasonWakeWordDetected);
@@ -858,35 +866,114 @@ void Application::InitializeIMU() {
     }
 }
 
+void Application::Initialize433MHz() {
+#if UART_433_ENABLE
+    ESP_LOGI(TAG, "Initializing 433MHz UART task...");
+
+    // 初始化UART硬件
+    UART_433_Init();
+
+    // 验证UART是否成功初始化
+    if (!UART_433_IsInitialized()) {
+        ESP_LOGE(TAG, "433MHz UART initialization failed!");
+        return;
+    }
+
+    // 创建433MHz接收任务
+    BaseType_t result = xTaskCreate([](void *arg){
+        (void)arg;  
+        static uint16_t uart_433_tx_cnt = 600;  // MAC地址发送计数（60秒）
+
+        ESP_LOGI("UART_433_Task", "433MHz task started on core %d", xPortGetCoreID());
+
+        while (true) {
+            UART_433_RX_DATA();  // 接收数据处理
+
+            // 发送MAC地址（开机后60秒内，每100ms发送一次）
+            #if SEND_MAC_ADDRESS_433
+            if (uart_433_tx_cnt > 0) {
+                UART_433_TX_DATA(SystemInfo::GetMacAddress().c_str());
+                uart_433_tx_cnt--;
+                if (uart_433_tx_cnt == 0) {
+                    ESP_LOGI("UART_433_Task", "433MHz MAC address broadcast completed");
+                }
+            }
+            #endif
+
+            vTaskDelay(100 / portTICK_PERIOD_MS);  // 100ms周期
+        }
+    }, "UART_433_RX_Task", 4096, this, 1, NULL);
+
+    if (result == pdPASS) {
+        ESP_LOGI(TAG, "433MHz UART task created successfully");
+    } else {
+        ESP_LOGE(TAG, "Failed to create 433MHz UART task");
+    }
+#else
+    ESP_LOGD(TAG, "433MHz UART is disabled");
+#endif
+}
+
 void Application::OnIMUTimer() {
     if (!imu_sensor_ || !imu_sensor_->IsInitialized()) {
         return;
     }
 
-
     t_sQMI8658 imu_data;
 
     if (imu_sensor_->ReadMotionData(&imu_data)) {
-        // 通过MQTT每125次读取（0.5秒）发送IMU数据 (4ms * 125 = 500ms)
-        static int mqtt_counter = 0;
-        if (++mqtt_counter >= 125) {
-            auto* mqtt_protocol = static_cast<MqttProtocol*>(protocol_.get());
-            if (mqtt_protocol) {
-                // 使用IMU检测到的运动等级作为touch_value参数
-                // motion: 0=IDLE, 1=SLIGHT, 2=MODERATE, 3=INTENSE
-                // 只有运动等级>0或fall_state=3时才会实际上传
-                static int idle_skip_counter = 0;
-                if ((imu_data.motion > 0) || (imu_data.fall_state == FALL_STATE_DETECTED)) {
-                    if (++idle_skip_counter >= 10) { // 每5秒打印一次跳过信息 (0.5s * 10 = 5s)
-                        ESP_LOGD(TAG, "IMU in IDLE state, skipping MQTT upload (motion=0)");
-                        idle_skip_counter = 0;
-                    }
-                } else {
-                    idle_skip_counter = 0; // 重置计数器
+        auto* mqtt_protocol = static_cast<MqttProtocol*>(protocol_.get());
+        if (mqtt_protocol) {
+            // 🚨 跌倒检测：防重复上传机制
+            static int last_fall_state = FALL_STATE_NORMAL;
+            static uint64_t last_fall_upload_time = 0;
+
+            if (imu_data.fall_state == static_cast<int>(FALL_STATE_DETECTED)) {
+                uint64_t current_time = esp_timer_get_time() / 1000; // 毫秒
+
+                // 检测到新的跌倒事件（状态从非DETECTED变为DETECTED）
+                bool new_fall_detected = (last_fall_state != FALL_STATE_DETECTED);
+
+                // 防止重复上传：5秒内不重复上传同一跌倒事件
+                bool cooldown_expired = (current_time - last_fall_upload_time) > 5000;
+
+                if (new_fall_detected || cooldown_expired) {
+                    ESP_LOGW(TAG, "🚨 FALL DETECTED - IMMEDIATE UPLOAD! fall_state=%d, new_fall=%s, cooldown_expired=%s",
+                            imu_data.fall_state, new_fall_detected ? "true" : "false", cooldown_expired ? "true" : "false");
+                    mqtt_protocol->SendImuStatesAndValue(imu_data, 0);  // 跌倒检测，touch_value=0
+                    last_fall_upload_time = current_time;
                 }
-                //mqtt_protocol->SendImuStatesAndValue(imu_data);
+                last_fall_state = imu_data.fall_state;
+                return;
             }
-            mqtt_counter = 0;
+
+            last_fall_state = imu_data.fall_state;
+
+            // 🎯 检查433MHz按键事件
+#if UART_433_ENABLE
+            static bool last_key_433_press = false;
+            bool key_event_detected = (key_433_press && !last_key_433_press);
+            last_key_433_press = key_433_press;
+
+            if (key_event_detected) {
+                ESP_LOGW(TAG, "🔘 433MHz Key pressed: '%c' (value: %d) - IMMEDIATE UPLOAD!",
+                        button_value, button_value_int);
+                mqtt_protocol->SendImuStatesAndValue(imu_data, button_value_int);
+                // 重置按键状态
+                key_433_press = false;
+                return;
+            }
+#endif
+
+            // 通过MQTT每125次读取（0.5秒）发送IMU数据 (4ms * 125 = 500ms)
+            static int mqtt_counter = 0;
+            if (++mqtt_counter >= 125) {
+                // 只有运动等级>0时才会实际上传
+               if (imu_data.motion > 0) {
+                    //mqtt_protocol->SendImuStatesAndValue(imu_data, 0);  // 正常IMU数据，touch_value=0
+                }
+                mqtt_counter = 0;
+            }
         }
     } else {
         // 读取失败时的错误日志

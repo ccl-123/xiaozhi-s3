@@ -15,7 +15,14 @@ QMI8658::QMI8658(i2c_master_bus_handle_t i2c_bus, uint8_t addr)
     , calibrated_(false)
     , fall_state_(FALL_STATE_NORMAL)
     , stable_start_time_(0)
-    , possible_fall_(false) {
+    , possible_fall_(false)
+    , impact_time_(0)
+    , max_gyro_magnitude_(0.0f)
+    , filtered_angle_x_(0.0f)
+    , filtered_angle_y_(0.0f)
+    , filtered_angle_z_(0.0f)
+    , last_update_time_(0)
+    , complementary_alpha_(0.98f) {
     InitializeFallDetection();
 }
 
@@ -23,7 +30,6 @@ QMI8658::~QMI8658() {
     // 析构函数，清理资源
 }
 
-// 移除RegisterRead和RegisterWriteByte方法，直接使用继承的ReadRegs和WriteReg
 
 bool QMI8658::Initialize() {
     
@@ -183,21 +189,55 @@ motion_level_t QMI8658::DetectMotion(t_sQMI8658 *p) {
 void QMI8658::CalculateAngles(t_sQMI8658 *data) {
     if (!data) return;
 
-    float temp;
+    uint64_t current_time = esp_timer_get_time() / 1000; // 毫秒
+    if (last_update_time_ == 0) {
+        // 首次初始化：使用加速度计计算初始角度
+        filtered_angle_x_ = atan2(data->acc_y_g,
+                                 sqrt(data->acc_x_g * data->acc_x_g + data->acc_z_g * data->acc_z_g)) * 57.29578f;
+        filtered_angle_y_ = atan2(-data->acc_x_g,
+                                 sqrt(data->acc_y_g * data->acc_y_g + data->acc_z_g * data->acc_z_g)) * 57.29578f;
+        filtered_angle_z_ = 0.0f; // yaw角初始化为0
+        last_update_time_ = current_time;
 
-    // 根据加速度计算倾角值并转换为角度（使用物理单位值以保持代码一致性）
-    temp = data->acc_x_g / sqrt((data->acc_y_g * data->acc_y_g +
-                                data->acc_z_g * data->acc_z_g));
-    data->AngleX = atan(temp) * 57.29578f;  // 180/π=57.29578
+    } else {
+        // 计算时间间隔
+        float dt = (current_time - last_update_time_) / 1000.0f; // 转换为秒
 
-    temp = data->acc_y_g / sqrt((data->acc_x_g * data->acc_x_g +
-                                data->acc_z_g * data->acc_z_g));
-    data->AngleY = atan(temp) * 57.29578f;
+        // 限制dt范围，防止异常值
+        if (dt > 0.1f) dt = 0.1f; // 最大100ms
+        if (dt < 0.001f) dt = 0.001f; // 最小1ms
 
-    temp = sqrt((data->acc_x_g * data->acc_x_g +
-                 data->acc_y_g * data->acc_y_g)) /
-           data->acc_z_g;
-    data->AngleZ = atan(temp) * 57.29578f;
+        // 步骤1：陀螺仪积分计算角度变化（短期精准）
+        float gyro_angle_x = filtered_angle_x_ + data->gyr_x_dps * dt;
+        float gyro_angle_y = filtered_angle_y_ + data->gyr_y_dps * dt;
+        float gyro_angle_z = filtered_angle_z_ + data->gyr_z_dps * dt;
+
+        // 步骤2：加速度计计算当前角度（长期稳定）
+        float accel_angle_x = atan2(data->acc_y_g,
+                                   sqrt(data->acc_x_g * data->acc_x_g + data->acc_z_g * data->acc_z_g)) * 57.29578f;
+        float accel_angle_y = atan2(-data->acc_x_g,
+                                   sqrt(data->acc_y_g * data->acc_y_g + data->acc_z_g * data->acc_z_g)) * 57.29578f;
+
+        // 步骤3：互补滤波融合
+        // Angle = α * (Angle + GyroRate * dt) + (1-α) * AccelAngle
+        filtered_angle_x_ = complementary_alpha_ * gyro_angle_x + (1.0f - complementary_alpha_) * accel_angle_x;
+        filtered_angle_y_ = complementary_alpha_ * gyro_angle_y + (1.0f - complementary_alpha_) * accel_angle_y;
+        filtered_angle_z_ = gyro_angle_z; // yaw角只能通过陀螺仪积分（需要磁力计才能修正）
+
+        // 角度范围限制
+        if (filtered_angle_x_ > 180.0f) filtered_angle_x_ -= 360.0f;
+        if (filtered_angle_x_ < -180.0f) filtered_angle_x_ += 360.0f;
+        if (filtered_angle_y_ > 180.0f) filtered_angle_y_ -= 360.0f;
+        if (filtered_angle_y_ < -180.0f) filtered_angle_y_ += 360.0f;
+        if (filtered_angle_z_ > 180.0f) filtered_angle_z_ -= 360.0f;
+        if (filtered_angle_z_ < -180.0f) filtered_angle_z_ += 360.0f;
+
+        last_update_time_ = current_time;
+    }
+
+    data->AngleX = filtered_angle_x_;
+    data->AngleY = filtered_angle_y_;
+    data->AngleZ = filtered_angle_z_;
 
     // 角度数据四舍五入到4位小数
     data->AngleX = roundf(data->AngleX * 10000.0f) / 10000.0f;
@@ -311,12 +351,35 @@ fall_detection_state_t QMI8658::DetectFall(t_sQMI8658 *data) {
     if (acc_mag > fall_config_.acc_threshold && gyro_mag > fall_config_.gyro_threshold) {
         possible_fall_ = true;
         stable_start_time_ = 0;  // 重置稳定计时
+        impact_time_ = current_time;  // 记录冲击时间
         fall_state_ = FALL_STATE_IMPACT;
-        ESP_LOGW(TAG, "Fall impact detected! acc=%.2fg, gyro=%.2f°/s", acc_mag, gyro_mag);
+
+        // 重置最大角速度记录
+        max_gyro_magnitude_ = 0.0f;
+
     }
 
-    // 阶段2：确认摔倒姿态
+    // 阶段2：摔倒确认逻辑
     if (possible_fall_) {
+        // 检查冲击后的时间窗口（1.5秒内必须完成姿态变化）
+        if (current_time - impact_time_ > 1500) {
+            possible_fall_ = false;
+            fall_state_ = FALL_STATE_NORMAL;
+            return fall_state_;
+        }
+
+
+        // 记录冲击后的最大角速度（用于判断运动是否足够剧烈）
+        float current_gyro_mag = sqrt(data->gyr_x_dps * data->gyr_x_dps +
+                                     data->gyr_y_dps * data->gyr_y_dps +
+                                     data->gyr_z_dps * data->gyr_z_dps);
+
+        if (current_gyro_mag > max_gyro_magnitude_) {
+            max_gyro_magnitude_ = current_gyro_mag;
+            ESP_LOGD(TAG, "Updated max_gyro_rate: %.1f°/s (gx=%.1f, gy=%.1f, gz=%.1f)",
+                    current_gyro_mag, data->gyr_x_dps, data->gyr_y_dps, data->gyr_z_dps);
+        }
+
         // 检查姿态角变化（使用pitch和roll，即AngleX和AngleY）
         bool posture_changed = (fabs(data->AngleX) > fall_config_.posture_angle_threshold ||
                                fabs(data->AngleY) > fall_config_.posture_angle_threshold);
@@ -326,20 +389,24 @@ fall_detection_state_t QMI8658::DetectFall(t_sQMI8658 *data) {
                           acc_mag < fall_config_.stable_acc_high);
         bool gyro_stable = (gyro_mag < fall_config_.stable_gyro);
 
-        if (posture_changed && acc_stable && gyro_stable) {
+        // 🎯 角速度检查（必须足够快才算摔倒）
+        bool gyro_fast_enough = (max_gyro_magnitude_ > 100.0f); // 至少100°/s的角速度
+
+        if (posture_changed && acc_stable && gyro_stable && gyro_fast_enough) {
             fall_state_ = FALL_STATE_CONFIRMING;
 
             if (stable_start_time_ == 0) {
                 stable_start_time_ = current_time;  // 开始计时
-                ESP_LOGW(TAG, "Fall confirmation started. Posture: X=%.1f°, Y=%.1f°",
-                         data->AngleX, data->AngleY);
+                ESP_LOGW(TAG, "Fall confirmation started. Posture: X=%.1f°, Y=%.1f°, max_gyro=%.1f°/s",
+                         data->AngleX, data->AngleY, max_gyro_magnitude_);
             } else if (current_time - stable_start_time_ > fall_config_.stable_time_ms) {
                 // 确认摔倒
                 fall_state_ = FALL_STATE_DETECTED;
                 possible_fall_ = false;  // 重置状态
-                ESP_LOGW(TAG, "FALL DETECTED! Final posture: X=%.1f°, Y=%.1f°⚠️⚠️",
-                         data->AngleX, data->AngleY);
-                return fall_state_;
+                stable_start_time_ = current_time;  // 🎯 记录进入DETECTED状态的时间
+                ESP_LOGW(TAG, "🚨🚨FALL DETECTED! Final posture: X=%.1f°, Y=%.1f°, max_gyro=%.1f°/s🚨🚨",
+                         data->AngleX, data->AngleY, max_gyro_magnitude_);
+                // 🎯 不要立即返回，让状态继续处理，确保Application层能捕获到DETECTED状态
             }
         } else {
             // 条件不满足，重置稳定计时
@@ -354,6 +421,37 @@ fall_detection_state_t QMI8658::DetectFall(t_sQMI8658 *data) {
             possible_fall_ = false;
             fall_state_ = FALL_STATE_NORMAL;
             ESP_LOGW(TAG, "Fall detection timeout, reset to normal");
+        }
+    }
+
+    // DETECTED状态自动重置逻辑
+    if (fall_state_ == FALL_STATE_DETECTED) {
+        static uint64_t recovery_start_time = 0;
+
+        // 检查设备是否已恢复正常姿态
+        bool posture_normal = (fabs(data->AngleX) < 30.0f && fabs(data->AngleY) < 30.0f);
+        bool movement_stable = (acc_mag > 0.8f && acc_mag < 1.2f && gyro_mag < 30.0f);
+
+        if (posture_normal && movement_stable) {
+            // 设备姿态恢复正常且运动稳定，检查持续时间
+            if (recovery_start_time == 0) {
+                recovery_start_time = current_time;
+            } else if (current_time - recovery_start_time > 1500) {  // 1.5秒确认时间
+                fall_state_ = FALL_STATE_NORMAL;
+                recovery_start_time = 0;
+                stable_start_time_ = 0;
+                ESP_LOGI(TAG, "✅ Fall state reset to NORMAL - device recovered");
+            }
+        } else {
+            // 重置恢复计时器
+            recovery_start_time = 0;
+        }
+
+        // 强制超时重置：DETECTED状态超过15秒自动重置
+        if (stable_start_time_ != 0 && current_time - stable_start_time_ > 15000) {
+            fall_state_ = FALL_STATE_NORMAL;
+            stable_start_time_ = 0;
+            ESP_LOGW(TAG, "⏰ Fall state force reset after 30s timeout");
         }
     }
 

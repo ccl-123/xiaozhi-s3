@@ -42,7 +42,7 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms) {
     afe_config_t* afe_config = afe_config_init(input_format.c_str(), NULL, AFE_TYPE_VC, AFE_MODE_HIGH_PERF);
     afe_config->aec_mode = AEC_MODE_VOIP_HIGH_PERF;
     afe_config->vad_mode = VAD_MODE_1;  // 数值越大触发概率越高
-    afe_config->vad_min_noise_ms = 800;  // 800ms静音时长，降低误触发（官方推荐1000ms）
+    afe_config->vad_min_noise_ms = 500;  // 500ms静音时长，降低误触发
     
     // 添加更多VAD调优参数以降低灵敏度（使用ESP-SR实际支持的参数）
     afe_config->vad_min_speech_ms = 128;  // 语音段的最短持续时间（毫秒）
@@ -176,7 +176,7 @@ void AfeAudioProcessor::AudioProcessorTask() {
                 // 2. 防误触机制：需持续触发时间达到vad_min_speech_ms才会正式触发
                 if (res->vad_cache_size > 0 && output_callback_) {
                     // 🛡️ 增强安全检查
-                    const size_t MAX_CACHE_SIZE = 16384;  // 8KB最大缓存限制
+                    const size_t MAX_CACHE_SIZE = 8192;  // 8KB最大缓存限制
 
                     if (res->vad_cache == nullptr) {
                         ESP_LOGE(TAG, "VAD cache pointer is null");

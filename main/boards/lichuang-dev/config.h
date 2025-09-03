@@ -22,6 +22,15 @@
 #define IMU_ENABLE 1
 #define IMU_I2C_ADDR 0x6A
 
+// 433MHz UART通信配置
+#define UART_433_ENABLE 1                       // 启用433MHz功能
+#define SEND_MAC_ADDRESS_433 1                  // 启用MAC地址广播
+#define UART_433_PIN_NUM           UART_NUM_2    // 使用UART2
+#define UART_433_TX_PIN            GPIO_NUM_6    // 发送引脚
+#define UART_433_RX_PIN            GPIO_NUM_7    // 接收引脚
+#define UART_433_TX_Buffer_Size    (1024)       // 发送缓冲区
+#define UART_433_RX_Buffer_Size    (1024)       // 接收缓冲区
+
 // #define AUDIO_CODEC_USE_PCA9557  // 已移除PCA9557依赖
 #define AUDIO_CODEC_I2C_SDA_PIN  GPIO_NUM_1
 #define AUDIO_CODEC_I2C_SCL_PIN  GPIO_NUM_2
@@ -31,6 +40,7 @@
 #define BUILTIN_LED_GPIO        GPIO_NUM_48
 #define RGB_LED_GPIO            GPIO_NUM_11  // RGB LED (WS2812) on GPIO 11
 #define BOOT_BUTTON_GPIO        GPIO_NUM_0
+#define POWER_BUTTON_GPIO       GPIO_NUM_47  // 电源按键 IO47 (与旧项目功能一致)
 #define VOLUME_UP_BUTTON_GPIO   GPIO_NUM_NC
 #define VOLUME_DOWN_BUTTON_GPIO GPIO_NUM_NC
 

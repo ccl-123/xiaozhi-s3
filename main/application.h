@@ -95,6 +95,9 @@ private:
     // IMU相关方法
     void InitializeIMU();
     void OnIMUTimer();
+
+    // 433MHz相关方法
+    void Initialize433MHz();
 };
 
 #endif // _APPLICATION_H_

@@ -33,6 +33,15 @@ Button::Button(gpio_num_t gpio_num, bool active_high, uint16_t long_press_time, 
         .disable_pull = false
     };
     ESP_ERROR_CHECK(iot_button_new_gpio_device(&button_config, &gpio_config, &button_handle_));
+
+    // 完全按照旧项目实现: 在Button构造函数中初始化GPIO4电源控制
+    // 这样确保每次系统启动时都会初始化GPIO4为高电平维持供电
+    {
+        // 先放在里，这个口要控制电源关闭，假如电源块煤电。
+        gpio_set_direction(GPIO_NUM_4, GPIO_MODE_OUTPUT);
+        gpio_set_level(GPIO_NUM_4, 1);  // 1 表示高电平，0 表示低电平
+        // 设置 GPIO4 为高电平
+    }
 }
 
 Button::~Button() {
