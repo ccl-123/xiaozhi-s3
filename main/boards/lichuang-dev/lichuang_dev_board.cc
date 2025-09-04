@@ -14,6 +14,7 @@
 #include <esp_lcd_panel_vendor.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_common.h>
+#include <esp_adc/adc_oneshot.h>
 #include <wifi_station.h>
 // #include <esp_lcd_touch_ft5x06.h>  // 已移除触摸屏支持
 #include <esp_lvgl_port.h>
@@ -86,6 +87,7 @@ private:
     Button power_button_;  // GPIO47电源按键 (对应旧项目的BOOT_BUTTON_GPIO)
     LcdDisplay* display_;
     QMI8658* imu_sensor_;
+    adc_oneshot_unit_handle_t adc_handle_;  // ADC句柄用于电压检测
 
     // 三连击检测变量 (与旧项目完全一致)
     int power_click_count_ = 0;
@@ -94,6 +96,24 @@ private:
 
     // GPIO47测试任务相关
     TaskHandle_t gpio47_test_task_ = nullptr;
+
+    void InitializeAdc() {
+        // 初始化ADC用于电压检测（参考参考项目实现）
+        adc_oneshot_unit_init_cfg_t init_config = {};
+        init_config.unit_id = ADC_UNIT_1;
+        ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc_handle_));
+
+        // 配置ADC通道
+        adc_oneshot_chan_cfg_t config = {};
+        config.bitwidth = ADC_BITWIDTH_DEFAULT;
+        config.atten = ADC_ATTEN_DB_12;  // 支持0-3.3V电压范围
+
+        // 配置ADC_CHANNEL_8和ADC_CHANNEL_9（对应GPIO8和GPIO9）
+        adc_oneshot_config_channel(adc_handle_, ADC_CHANNEL_8, &config);
+        adc_oneshot_config_channel(adc_handle_, ADC_CHANNEL_9, &config);
+
+        ESP_LOGI(TAG, "ADC initialized for battery voltage detection (CH8=ref, CH9=battery)");
+    }
 
     void InitializeI2c() {
         // Initialize I2C peripheral
@@ -258,6 +278,7 @@ public:
                         power_button_(POWER_BUTTON_GPIO, true, 3000, 50, false) {
         // GPIO0: 标准BOOT按键，使用默认配置
         // GPIO47: 电源按键，下拉电阻设计，按键按下=高电平，active_high=true
+        InitializeAdc();
         InitializeI2c();
         InitializeSpi();
         InitializeSt7789Display();
@@ -304,6 +325,23 @@ public:
     virtual Led* GetLed() override {
         static SingleLed led(RGB_LED_GPIO);  // 使用GPIO 11的RGB LED
         return &led;
+    }
+
+    // 电压检测函数（参考参考项目实现）
+    double GetBattary() {
+        int adc_raw_value = 0;
+        int ref = 0;
+
+        // 读取参考电压（ADC_CHANNEL_8对应GPIO8）
+        adc_oneshot_read(adc_handle_, ADC_CHANNEL_8, &ref);
+
+        // 读取电池电压（ADC_CHANNEL_9对应GPIO9）
+        adc_oneshot_read(adc_handle_, ADC_CHANNEL_9, &adc_raw_value);
+
+        // 计算实际电压值（参考参考项目的计算公式）
+        double voltage = 4.98f * adc_raw_value / ref;
+
+        return voltage;
     }
 
 };

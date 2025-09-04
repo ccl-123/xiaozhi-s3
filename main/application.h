@@ -86,6 +86,11 @@ private:
     QMI8658* imu_sensor_ = nullptr;
     esp_timer_handle_t imu_timer_handle_ = nullptr;
 
+    // 电压检测相关
+    double battery_voltage_ = 0.0;  // 当前电压值
+    double filtered_voltage_ = 0.0; // 滤波后的电压值
+    uint32_t last_battery_upload_time_ = 0;  // 上次电压上报时间
+
     void OnWakeWordDetected();
     void CheckNewVersion(Ota& ota);
     void ShowActivationCode(const std::string& code, const std::string& message);
