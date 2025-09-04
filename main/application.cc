@@ -921,6 +921,47 @@ void Application::OnIMUTimer() {
 
     t_sQMI8658 imu_data;
 
+    // 🔋 电压检测逻辑（每1秒执行一次，即250次IMU读取）
+    static int voltage_counter = 0;
+    if (++voltage_counter >= VOLTAGE_CHECK_INTERVAL) { // 4ms * 250 = 1000ms
+        auto& board = Board::GetInstance();
+        double current_voltage = board.GetBattary();
+
+        if (current_voltage > 0.0) {
+            // 电压滤波（参考项目）
+            if (filtered_voltage_ == 0.0) {
+                filtered_voltage_ = current_voltage; // 首次初始化
+            } else {
+                filtered_voltage_ = filtered_voltage_ * 0.85 + current_voltage * 0.15;
+            }
+
+            battery_voltage_ = current_voltage;
+
+            // 低电压检测和上报（当电压<=LOW_VOLTAGE_VALUE01时上报）
+            uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+            const uint32_t BATTERY_UPLOAD_INTERVAL_MS = SEND_LOW_VOLTAGE_TIME * 1000; // 使用定义的间隔时间
+
+            if (filtered_voltage_ <= LOW_VOLTAGE_VALUE01 &&
+                (current_time - last_battery_upload_time_) >= BATTERY_UPLOAD_INTERVAL_MS) {
+
+                ESP_LOGW(TAG, "🔋 Low battery detected: %.2fV (filtered: %.2fV)",
+                        current_voltage, filtered_voltage_);
+
+                // 通过MQTT立即上报电压信息，需要先读取IMU数据
+                if (imu_sensor_->ReadMotionData(&imu_data)) {
+                    auto* mqtt_protocol = static_cast<MqttProtocol*>(protocol_.get());
+                    if (mqtt_protocol) {
+                        mqtt_protocol->SendImuStatesAndValue(imu_data, 0, filtered_voltage_);
+                        last_battery_upload_time_ = current_time;
+                        return; // 电压上报完成，直接返回
+                    }
+                }
+            }
+        }
+        voltage_counter = 0;
+    }
+
+    // 读取IMU数据进行后续处理
     if (imu_sensor_->ReadMotionData(&imu_data)) {
         auto* mqtt_protocol = static_cast<MqttProtocol*>(protocol_.get());
         if (mqtt_protocol) {
@@ -940,7 +981,7 @@ void Application::OnIMUTimer() {
                 if (new_fall_detected || cooldown_expired) {
                     ESP_LOGW(TAG, "🚨 FALL DETECTED - IMMEDIATE UPLOAD! fall_state=%d, new_fall=%s, cooldown_expired=%s",
                             imu_data.fall_state, new_fall_detected ? "true" : "false", cooldown_expired ? "true" : "false");
-                    mqtt_protocol->SendImuStatesAndValue(imu_data, 0);  // 跌倒检测，touch_value=0
+                    mqtt_protocol->SendImuStatesAndValue(imu_data, 0, filtered_voltage_);  // 跌倒检测，包含电压信息
                     last_fall_upload_time = current_time;
                 }
                 last_fall_state = imu_data.fall_state;
@@ -958,7 +999,7 @@ void Application::OnIMUTimer() {
             if (key_event_detected) {
                 ESP_LOGW(TAG, "🔘 433MHz Key pressed: '%c' (value: %d) - IMMEDIATE UPLOAD!",
                         button_value, button_value_int);
-                mqtt_protocol->SendImuStatesAndValue(imu_data, button_value_int);
+                mqtt_protocol->SendImuStatesAndValue(imu_data, button_value_int, filtered_voltage_);
                 // 重置按键状态
                 key_433_press = false;
                 return;
@@ -968,9 +1009,9 @@ void Application::OnIMUTimer() {
             // 通过MQTT每125次读取（0.5秒）发送IMU数据 (4ms * 125 = 500ms)
             static int mqtt_counter = 0;
             if (++mqtt_counter >= 125) {
-                // 只有运动等级>0时才会实际上传
+                // 只有运动等级>0时才会实际上传，包含电压信息
                if (imu_data.motion > 0) {
-                    //mqtt_protocol->SendImuStatesAndValue(imu_data, 0);  // 正常IMU数据，touch_value=0
+                    mqtt_protocol->SendImuStatesAndValue(imu_data, 0, filtered_voltage_);  // 正常IMU数据，包含电压
                 }
                 mqtt_counter = 0;
             }

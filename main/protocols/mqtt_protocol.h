@@ -20,6 +20,13 @@
 
 #define MQTT_PROTOCOL_SERVER_HELLO_EVENT (1 << 0)
 
+// 电压检测相关定义
+#define SEND_LOW_VOLTAGE_TIME                5      // 低电压状态下上报间隔（秒）
+#define VOLTAGE_CHECK_INTERVAL               250    // 电压检测间隔（IMU周期数，250*4ms=1秒）
+#define LOW_VOLTAGE_VALUE01                  3.5    // 25%电量阈值
+#define LOW_VOLTAGE_VALUE02                  3.4    // 15%电量阈值
+#define LOW_VOLTAGE_VALUE03                  3.3    // 5%电量阈值
+
 class MqttProtocol : public Protocol {
 public:
     MqttProtocol();
@@ -35,7 +42,10 @@ public:
     void UpdateLanguage(const std::string& language);
 
     // IMU数据发送方法
-    void SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_value = 0);
+    void SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_value = 0, double battery_voltage = 0.0);
+
+    // 电压转换为电池百分比
+    std::string ConvertVoltageToBatteryPercentage(double voltage);
 
     // 重写基类方法，适配自定义服务器格式
     void SendAbortSpeaking(AbortReason reason) override;
