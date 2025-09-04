@@ -347,7 +347,7 @@ bool MqttProtocol::IsAudioChannelOpened() const {
     return mqtt_ != nullptr && mqtt_->IsConnected() && !error_occurred_ && !IsTimeout();
 }
 
-void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_value) {
+void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_value, double battery_voltage) {
     if (mqtt_ == nullptr || !mqtt_->IsConnected()) {
         ESP_LOGE(TAG, "MQTT client not connected");
         return;
@@ -401,6 +401,12 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
     // 🎯 添加433MHz按键值作为touch_value
     cJSON_AddNumberToObject(root, "touch_value", touch_value);
 
+    // 🔋 添加电池电压信息
+    if (battery_voltage > 0.0) {
+        std::string battery_percentage = ConvertVoltageToBatteryPercentage(battery_voltage);
+        cJSON_AddStringToObject(root, "battery_voltage", battery_percentage.c_str());
+    }
+
     // 添加设备ID
     cJSON_AddStringToObject(root, "device_id", user_id3_.c_str());
 
@@ -410,23 +416,31 @@ void MqttProtocol::SendImuStatesAndValue(const t_sQMI8658& imu_data, int touch_v
     static int log_counter = 0;
     if (++log_counter >= 1) {  // 每1次发送（0.5秒）打印一次详细数据
         ESP_LOGI(TAG, "===== IMU Data (UPLOADING) =====");
-        ESP_LOGI(TAG, "Accelerometer: X=%.4fg, Y=%.4fg, Z=%.4fg",
-                 acc_x_g, acc_y_g, acc_z_g);
-        ESP_LOGI(TAG, "Gyroscope: X=%.4f°/s, Y=%.4f°/s, Z=%.4f°/s",
-                 gyr_x_dps, gyr_y_dps, gyr_z_dps);
         ESP_LOGI(TAG, "Motion Level: %d (%s) ", imu_data.motion,
                  imu_data.motion == 0 ? "IDLE" :
                  imu_data.motion == 1 ? "SLIGHT" :
                  imu_data.motion == 2 ? "MODERATE" : "INTENSE");
+        ESP_LOGI(TAG, "Gyroscope: X=%.4f°/s, Y=%.4f°/s, Z=%.4f°/s",
+                 gyr_x_dps, gyr_y_dps, gyr_z_dps);
+        ESP_LOGI(TAG, "Accelerometer: X=%.4fg, Y=%.4fg, Z=%.4fg",
+                 acc_x_g, acc_y_g, acc_z_g);
+#if UART_433_ENABLE
+        ESP_LOGI(TAG, "433MHz Button: '%c' (value: %d)", button_value, touch_value);
+#endif
+        // 🔋 显示电压信息（包含上报字符串）
+        std::string battery_percentage = ConvertVoltageToBatteryPercentage(battery_voltage);
+        if (!battery_percentage.empty()) {
+            ESP_LOGI(TAG, "🔋 Battery Voltage: %.2fV (%s)", battery_voltage, battery_percentage.c_str());
+        } else {
+            ESP_LOGI(TAG, "🔋 Battery Voltage: %.2fV", battery_voltage);
+        }
+        ESP_LOGI(TAG, "Device ID: %s", user_id3_.c_str());
         ESP_LOGI(TAG, "Fall State: %d (%s)", imu_data.fall_state,
                  imu_data.fall_state == 0 ? "NORMAL" :
                  imu_data.fall_state == 1 ? "IMPACT" :
                  imu_data.fall_state == 2 ? "CONFIRMING" :
                  imu_data.fall_state == 3 ? "[DETECTED]" : "UNKNOWN");
-#if UART_433_ENABLE
-        ESP_LOGI(TAG, "433MHz Button: '%c' (value: %d)", button_value, button_value_int);
-#endif
-        ESP_LOGI(TAG, "Device ID: %s", user_id3_.c_str());
+
         ESP_LOGI(TAG, "====================================");
         log_counter = 0;
     }
@@ -486,7 +500,7 @@ void MqttProtocol::SendAbortSpeaking(AbortReason reason) {
 
 
 
-    // ：参考SendText的简洁实现，直接发送
+    // 参考SendText的简洁实现，直接发送
     if (mqtt_->Publish(cancel_topic, message, 0)) {  // QoS=0，快速发送
         ESP_LOGI(TAG, "CancelTTS message sent to topic: %s", cancel_topic.c_str());
         ESP_LOGI(TAG, "Sending CancelTTS message: %s", message.c_str());
@@ -497,4 +511,16 @@ void MqttProtocol::SendAbortSpeaking(AbortReason reason) {
     // 清理资源
     cJSON_free(message_str);
     cJSON_Delete(root);
+}
+
+std::string MqttProtocol::ConvertVoltageToBatteryPercentage(double voltage) {
+    if ((voltage <= LOW_VOLTAGE_VALUE01) && (voltage > LOW_VOLTAGE_VALUE02)) {
+        return "25";
+    } else if ((voltage <= LOW_VOLTAGE_VALUE02) && (voltage > LOW_VOLTAGE_VALUE03)) {
+        return "15";
+    } else if ((voltage <= LOW_VOLTAGE_VALUE03) && (voltage > 0)) {
+        return "5";
+    } else {
+        return "";
+    }
 }
