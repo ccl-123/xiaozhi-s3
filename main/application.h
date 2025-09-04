@@ -91,6 +91,12 @@ private:
     double filtered_voltage_ = 0.0; // 滤波后的电压值
     uint32_t last_battery_upload_time_ = 0;  // 上次电压上报时间
 
+    // 音量控制相关（参考旧项目实现）
+    int current_volume_ = 70;  // 当前音量值，默认70
+    static constexpr int kVolumeStep = 10;   // 音量步进值：10
+    static constexpr int kVolumeMax = 100;   // 最大音量：100
+    static constexpr int kVolumeMin = 60;    // 最小音量：60（与旧项目保持一致）
+
     void OnWakeWordDetected();
     void CheckNewVersion(Ota& ota);
     void ShowActivationCode(const std::string& code, const std::string& message);
@@ -103,6 +109,10 @@ private:
 
     // 433MHz相关方法
     void Initialize433MHz();
+
+    // 音量控制相关函数（参考旧项目）
+    void SaveVolumeToNVS(int volume);
+    int LoadVolumeFromNVS(int default_value);
 };
 
 #endif // _APPLICATION_H_
