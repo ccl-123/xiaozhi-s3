@@ -2,6 +2,11 @@
 #include "board.h"
 #include "display.h"
 #include "mqtt_protocol.h"
+#include <nvs_flash.h>
+#include <nvs.h>
+
+// 电源控制函数声明（lichuang-dev板子支持）
+extern void SetPowerOffset(bool enable);
 
 // 前向声明
 class LichuangDevBoard;
@@ -345,6 +350,11 @@ void Application::Start() {
     audio_service_.Initialize(codec);
     audio_service_.Start();
 
+    /* Load and set saved volume (参考旧项目) */
+    current_volume_ = LoadVolumeFromNVS(current_volume_);
+    codec->SetOutputVolume(current_volume_);
+    ESP_LOGI(TAG, "Audio volume initialized to: %d", current_volume_);
+
     AudioServiceCallbacks callbacks;
     callbacks.on_send_queue_available = [this]() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_SEND_AUDIO);
@@ -457,6 +467,58 @@ void Application::Start() {
                         display->SetChatMessage("assistant", message.c_str());
                     });
                 }
+            }
+        } else if (strcmp(type->valuestring, "0") == 0 || strcmp(type->valuestring, "1") == 0 ||
+                   strcmp(type->valuestring, "2") == 0 || strcmp(type->valuestring, "3") == 0) {
+            // 控制消息处理（参考旧项目实现）
+            cJSON* vlue = cJSON_GetObjectItem(root, "vlue");
+            if (!vlue || !cJSON_IsString(vlue)) {
+                ESP_LOGW(TAG, "Missing or invalid vlue field in control message");
+                return;
+            }
+
+            int type_val = atoi(type->valuestring);  // 将类型字符串转换为整数
+            std::string control_value = vlue->valuestring;
+
+            ESP_LOGI(TAG, "Processing control message: type=%d, value=%s", type_val, control_value.c_str());
+
+            if (type_val == 0) {  // 音量控制
+                auto codec = Board::GetInstance().GetAudioCodec();
+                if (!codec) {
+                    ESP_LOGE(TAG, "Codec is null");
+                    return;
+                }
+
+                int new_volume = current_volume_;
+                if (control_value == "+") {
+                    new_volume = current_volume_ + kVolumeStep;
+                } else if (control_value == "-") {
+                    new_volume = current_volume_ - kVolumeStep;
+                } else if (control_value == "++") {
+                    new_volume = kVolumeMax;
+                } else if (control_value == "--") {
+                    new_volume = kVolumeMin;
+                } else {
+                    try {
+                        new_volume = std::stoi(control_value);
+                    } catch (const std::exception& e) {
+                        ESP_LOGW(TAG, "Invalid volume value: %s", control_value.c_str());
+                        return;
+                    }
+                }
+                new_volume = std::max(kVolumeMin, std::min(100, new_volume));
+
+                ESP_LOGW(TAG, "Setting volume: %d -> %d", current_volume_, new_volume);
+                codec->SetOutputVolume(new_volume);
+                current_volume_ = new_volume;
+                SaveVolumeToNVS(new_volume);
+            } else if (type_val == 1) {  // 关机控制
+                ESP_LOGW(TAG, "Shutdown requested - powering off via hardware");
+                SetPowerOffset(false);  // lichuang-dev板子硬件断电
+            } else if (type_val == 2) {  // 其他控制类型（预留）
+                ESP_LOGW(TAG, "Control type %d not implemented yet: %s", type_val, control_value.c_str());
+            } else if (type_val == 3) {  // 其他控制类型（预留）
+                ESP_LOGW(TAG, "Control type %d not implemented yet: %s", type_val, control_value.c_str());
             }
         } else if (strcmp(type->valuestring, "stt") == 0) {
             auto text = cJSON_GetObjectItem(root, "text");
@@ -1024,5 +1086,40 @@ void Application::OnIMUTimer() {
             error_counter = 0;
         }
     }
+}
+
+// 音量控制相关函数实现（参考旧项目）
+void Application::SaveVolumeToNVS(int volume) {
+    nvs_handle_t nvs_handle;
+    if (nvs_open("config", NVS_READWRITE, &nvs_handle) == ESP_OK) {
+        if (nvs_set_i32(nvs_handle, "volume", volume) != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to save volume to NVS");
+        } else {
+            ESP_LOGI(TAG, "Volume saved to NVS: %d", volume);
+        }
+        nvs_commit(nvs_handle);
+        nvs_close(nvs_handle);
+    } else {
+        ESP_LOGE(TAG, "Failed to open NVS for writing volume setting");
+    }
+}
+
+int Application::LoadVolumeFromNVS(int default_value) {
+    int volume = default_value;
+    nvs_handle_t nvs_handle;
+
+    if (nvs_open("config", NVS_READONLY, &nvs_handle) == ESP_OK) {
+        int32_t saved_volume;  // Use int32_t to match nvs_get_i32 expectations
+        if (nvs_get_i32(nvs_handle, "volume", &saved_volume) == ESP_OK) {
+            // Ensure it's in valid range
+            if (saved_volume >= 0 && saved_volume <= 100) {
+                volume = saved_volume;
+                ESP_LOGI(TAG, "Loaded saved volume: %d", volume);
+            }
+        }
+        nvs_close(nvs_handle);
+    }
+
+    return volume;
 }
 
