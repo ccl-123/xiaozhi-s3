@@ -35,6 +35,9 @@ public:
     float GetCurrentEnergyLevel() const;
     float GetVadEnergyThreshold() const;
 
+    // 强制重置VAD状态为silence（speaking状态强制重置）
+    void ForceVadSilence();
+
 private:
     EventGroupHandle_t event_group_ = nullptr;
     esp_afe_sr_iface_t* afe_iface_ = nullptr;
