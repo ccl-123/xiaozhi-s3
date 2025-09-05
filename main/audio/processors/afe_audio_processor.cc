@@ -348,6 +348,27 @@ float AfeAudioProcessor::GetVadEnergyThreshold() const {
     return vad_energy_threshold_dbfs_;
 }
 
+// 强制重置VAD状态为silence
+// 用于解决嘈杂环境下VAD状态卡死导致的打断失效问题
+void AfeAudioProcessor::ForceVadSilence() {
+    if (is_speaking_) {
+        ESP_LOGW(TAG, "🔄 [VAD-RESET] 强制重置VAD状态: speaking->silence");
+        is_speaking_ = false;
+
+        // 重置能量检测状态，避免状态混乱
+        energy_above_threshold_frames_ = 0;
+        energy_below_threshold_frames_ = 0;
+
+        // 重置平滑能量值，确保下次检测的准确性
+        smoothed_energy_dbfs_ = -100.0f;
+
+        // 通知上层VAD状态变化
+        if (vad_state_change_callback_) {
+            vad_state_change_callback_(false);
+        }
+    }
+}
+
 void AfeAudioProcessor::SetVadSmoothFactor(float smooth_factor) {
     // 参数有效性检查
     if (smooth_factor <= 0.0f || smooth_factor >= 1.0f) {
