@@ -547,6 +547,23 @@ void AudioService::EnableAudioUpload(bool enable) {
     audio_upload_enabled_ = enable;
 }
 
+//  强制重置VAD状态为silence
+// 用于解决嘈杂环境下VAD状态卡死导致的打断失效问题
+void AudioService::ForceVadSilence() {
+    if (!audio_processor_) {
+        ESP_LOGW(TAG, "🔄 [VAD-RESET] AudioProcessor未初始化，无法重置VAD状态");
+        return;
+    }
+
+#if CONFIG_USE_AUDIO_PROCESSOR
+    // 在CONFIG_USE_AUDIO_PROCESSOR模式下，audio_processor_是AfeAudioProcessor
+    auto afe_processor = static_cast<AfeAudioProcessor*>(audio_processor_.get());
+    afe_processor->ForceVadSilence();
+#else
+    ESP_LOGW(TAG, "🔄 [VAD-RESET] 当前配置不支持音频处理器，无法重置VAD状态");
+#endif
+}
+
 void AudioService::EnableDeviceAec(bool enable) {
     ESP_LOGI(TAG, "%s device AEC", enable ? "Enabling" : "Disabling");
     if (!audio_processor_initialized_) {

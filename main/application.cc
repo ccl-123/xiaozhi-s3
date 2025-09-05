@@ -797,7 +797,12 @@ void Application::SetDeviceState(DeviceState state) {
                 if (!audio_service_.IsAudioProcessorRunning()) {
                     audio_service_.EnableVoiceProcessing(true);
                 }
-                // 初始时关闭音频上传，等待VAD检测
+
+                // 🎯强制重置VAD状态为silence
+                // 解决嘈杂环境下VAD状态卡死导致的打断失效问题
+                audio_service_.ForceVadSilence();
+
+                // 初始时关闭音频上传，等待VAD检测到用户说话时再开启
                 audio_service_.EnableAudioUpload(false);
             }
             audio_service_.ResetDecoder();

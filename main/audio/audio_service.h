@@ -100,6 +100,9 @@ public:
     void EnableDeviceAec(bool enable);
     void EnableAudioUpload(bool enable);
 
+    //  强制重置VAD状态为silence（用于解决嘈杂环境下的打断问题）
+    void ForceVadSilence();
+
     void SetCallbacks(AudioServiceCallbacks& callbacks);
 
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
